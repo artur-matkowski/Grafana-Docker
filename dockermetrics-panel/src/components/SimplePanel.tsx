@@ -6,17 +6,7 @@ import { useStyles2 } from '@grafana/ui';
 
 interface Props extends PanelProps<SimpleOptions> {}
 
-const getStyles = (containersPerRow: number, metricsPerRow: number) => {
-  const containerGridCols =
-    containersPerRow > 0
-      ? `repeat(${containersPerRow}, 1fr)`
-      : 'repeat(auto-fill, minmax(300px, 1fr))';
-
-  const metricsGridCols =
-    metricsPerRow > 0
-      ? `repeat(${metricsPerRow}, 1fr)`
-      : 'repeat(auto-fill, minmax(120px, 1fr))';
-
+const getStyles = () => {
   return {
     wrapper: css`
       position: relative;
@@ -66,7 +56,6 @@ const getStyles = (containersPerRow: number, metricsPerRow: number) => {
     `,
     containersGrid: css`
       display: grid;
-      grid-template-columns: ${containerGridCols};
       gap: 12px;
       padding: 0 4px;
     `,
@@ -97,7 +86,6 @@ const getStyles = (containersPerRow: number, metricsPerRow: number) => {
     `,
     metricsGrid: css`
       display: grid;
-      grid-template-columns: ${metricsGridCols};
       gap: 10px;
     `,
     metric: css`
@@ -159,18 +147,17 @@ const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatV
     return null;
   }
 
-  const width = 100;
   const padding = 2;
   const chartHeight = height - padding * 2;
-  const chartWidth = width - 28;
 
   const min = Math.min(...data);
   const max = Math.max(...data);
   const range = max - min || 1;
 
+  // Generate points as percentage-based coordinates (0-100 for x, actual pixels for y)
   const points = data
     .map((value, index) => {
-      const x = (index / (data.length - 1)) * chartWidth;
+      const x = (index / (data.length - 1)) * 100;
       const y = padding + chartHeight - ((value - min) / range) * chartHeight;
       return `${x},${y}`;
     })
@@ -180,39 +167,41 @@ const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatV
   const scaleMin = formatValue(min);
 
   return (
-    <div style={{ position: 'relative', height }}>
-      <svg
-        width="100%"
-        height={height}
-        viewBox={`0 0 ${width} ${height}`}
-        preserveAspectRatio="none"
-        style={{ display: 'block' }}
+    <div style={{ position: 'relative', height, display: 'flex' }}>
+      {/* Chart area - takes remaining space */}
+      <div style={{ flex: 1, position: 'relative', minWidth: 0 }}>
+        <svg
+          width="100%"
+          height={height}
+          viewBox={`0 0 100 ${height}`}
+          preserveAspectRatio="none"
+          style={{ display: 'block' }}
+        >
+          {/* Grid lines */}
+          <line x1="0" y1={padding} x2="100" y2={padding} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
+          <line x1="0" y1={padding + chartHeight / 2} x2="100" y2={padding + chartHeight / 2} stroke="rgba(255,255,255,0.05)" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
+          <line x1="0" y1={padding + chartHeight} x2="100" y2={padding + chartHeight} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
+          {/* Data line */}
+          <polyline fill="none" stroke={color} strokeWidth="1.5" points={points} vectorEffect="non-scaling-stroke" />
+        </svg>
+      </div>
+      {/* Scale labels - fixed width, not stretched */}
+      <div
+        style={{
+          width: '32px',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          fontSize: '8px',
+          color: '#666',
+          textAlign: 'right',
+          paddingLeft: '4px',
+          flexShrink: 0,
+        }}
       >
-        <line x1="0" y1={padding} x2={chartWidth} y2={padding} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
-        <line
-          x1="0"
-          y1={padding + chartHeight / 2}
-          x2={chartWidth}
-          y2={padding + chartHeight / 2}
-          stroke="rgba(255,255,255,0.05)"
-          strokeWidth="0.5"
-        />
-        <line
-          x1="0"
-          y1={padding + chartHeight}
-          x2={chartWidth}
-          y2={padding + chartHeight}
-          stroke="rgba(255,255,255,0.1)"
-          strokeWidth="0.5"
-        />
-        <polyline fill="none" stroke={color} strokeWidth="1.5" points={points} />
-        <text x={width - 2} y={padding + 3} fontSize="7" fill="#666" textAnchor="end">
-          {scaleMax}
-        </text>
-        <text x={width - 2} y={height - padding} fontSize="7" fill="#666" textAnchor="end">
-          {scaleMin}
-        </text>
-      </svg>
+        <span>{scaleMax}</span>
+        <span>{scaleMin}</span>
+      </div>
     </div>
   );
 };
@@ -261,7 +250,20 @@ function calculateRates(
 export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange }) => {
   const containersPerRow = options.containersPerRow || 0;
   const metricsPerRow = options.metricsPerRow || 0;
-  const styles = useStyles2(() => getStyles(containersPerRow, metricsPerRow));
+  const styles = useStyles2(getStyles);
+
+  // Dynamic grid styles based on options
+  const containerGridStyle = {
+    gridTemplateColumns:
+      containersPerRow > 0
+        ? `repeat(${containersPerRow}, 1fr)`
+        : 'repeat(auto-fill, minmax(300px, 1fr))',
+  };
+
+  const metricsGridStyle = {
+    gridTemplateColumns:
+      metricsPerRow > 0 ? `repeat(${metricsPerRow}, 1fr)` : 'repeat(auto-fill, minmax(120px, 1fr))',
+  };
 
   const [allMetrics, setAllMetrics] = useState<ContainerMetricSnapshot[]>([]);
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
@@ -558,7 +560,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
             </span>
           </div>
 
-          <div className={styles.containersGrid}>
+          <div className={styles.containersGrid} style={containerGridStyle}>
             {host.containers.map((container) => (
               <div key={container.containerId} className={styles.containerCard}>
                 <div className={styles.containerHeader}>
@@ -573,7 +575,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                   </span>
                 </div>
 
-                <div className={styles.metricsGrid}>
+                <div className={styles.metricsGrid} style={metricsGridStyle}>
                   {selectedMetricDefs.map((metricDef) => renderMetric(container, metricDef))}
                 </div>
               </div>
