@@ -132,6 +132,64 @@ const getStyles = () => {
       display: flex;
       gap: 16px;
     `,
+    controlsRow: css`
+      display: flex;
+      gap: 4px;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    `,
+    controlButton: css`
+      flex: 1;
+      padding: 6px 8px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 4px;
+      background: rgba(0, 0, 0, 0.2);
+      color: #ccc;
+      font-size: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: all 0.15s ease;
+      &:hover {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: rgba(255, 255, 255, 0.25);
+      }
+      &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+    `,
+    controlButtonStart: css`
+      &:hover {
+        background: rgba(115, 191, 105, 0.2);
+        border-color: #73bf69;
+        color: #73bf69;
+      }
+    `,
+    controlButtonStop: css`
+      &:hover {
+        background: rgba(242, 73, 92, 0.2);
+        border-color: #f2495c;
+        color: #f2495c;
+      }
+    `,
+    controlButtonRestart: css`
+      &:hover {
+        background: rgba(255, 152, 48, 0.2);
+        border-color: #ff9830;
+        color: #ff9830;
+      }
+    `,
+    controlButtonPause: css`
+      &:hover {
+        background: rgba(87, 148, 242, 0.2);
+        border-color: #5794f2;
+        color: #5794f2;
+      }
+    `,
   };
 };
 
@@ -246,6 +304,84 @@ function calculateRates(
 
   return rates;
 }
+
+// Container control actions
+type ContainerAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause';
+
+interface ContainerControlsProps {
+  apiUrl: string;
+  hostId: string;
+  containerId: string;
+  isRunning: boolean;
+  styles: ReturnType<typeof getStyles>;
+}
+
+const ContainerControls: React.FC<ContainerControlsProps> = ({
+  apiUrl,
+  hostId,
+  containerId,
+  isRunning,
+  styles,
+}) => {
+  const [loading, setLoading] = useState<ContainerAction | null>(null);
+
+  const executeAction = async (action: ContainerAction) => {
+    setLoading(action);
+    try {
+      const response = await fetch(`${apiUrl}/api/containers/${hostId}/${containerId}/${action}`, {
+        method: 'POST',
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        console.error(`Failed to ${action} container:`, data.error);
+      }
+    } catch (err) {
+      console.error(`Failed to ${action} container:`, err);
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  return (
+    <div className={styles.controlsRow}>
+      {!isRunning ? (
+        <button
+          className={`${styles.controlButton} ${styles.controlButtonStart}`}
+          onClick={() => executeAction('start')}
+          disabled={loading !== null}
+          title="Start container"
+        >
+          {loading === 'start' ? '...' : '▶ Start'}
+        </button>
+      ) : (
+        <button
+          className={`${styles.controlButton} ${styles.controlButtonStop}`}
+          onClick={() => executeAction('stop')}
+          disabled={loading !== null}
+          title="Stop container"
+        >
+          {loading === 'stop' ? '...' : '■ Stop'}
+        </button>
+      )}
+      <button
+        className={`${styles.controlButton} ${styles.controlButtonRestart}`}
+        onClick={() => executeAction('restart')}
+        disabled={loading !== null || !isRunning}
+        title="Restart container"
+      >
+        {loading === 'restart' ? '...' : '↻ Restart'}
+      </button>
+      <button
+        className={`${styles.controlButton} ${styles.controlButtonPause}`}
+        onClick={() => executeAction('pause')}
+        disabled={loading !== null || !isRunning}
+        title="Pause container"
+      >
+        {loading === 'pause' ? '...' : '⏸ Pause'}
+      </button>
+    </div>
+  );
+};
 
 export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange }) => {
   const containersPerRow = options.containersPerRow || 0;
@@ -578,6 +714,16 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                 <div className={styles.metricsGrid} style={metricsGridStyle}>
                   {selectedMetricDefs.map((metricDef) => renderMetric(container, metricDef))}
                 </div>
+
+                {options.enableContainerControls && (
+                  <ContainerControls
+                    apiUrl={options.apiUrl}
+                    hostId={container.hostId}
+                    containerId={container.containerId}
+                    isRunning={container.latest?.isRunning ?? false}
+                    styles={styles}
+                  />
+                )}
               </div>
             ))}
           </div>

@@ -170,6 +170,125 @@ app.MapGet("/api/metrics/hosts", (
 });
 
 // =====================
+// Container Control Endpoints
+// =====================
+
+// Start a container
+app.MapPost("/api/containers/{hostId}/{containerId}/start", async (
+    ConfigService config,
+    DockerClientFactory clientFactory,
+    string hostId,
+    string containerId) =>
+{
+    var host = config.GetHost(hostId);
+    if (host == null)
+    {
+        return Results.NotFound(new { error = "Host not found" });
+    }
+
+    var client = clientFactory.CreateClient(host);
+    var (success, error) = await client.StartContainerAsync(containerId);
+
+    if (success)
+    {
+        return Results.Ok(new { success = true, action = "start", containerId });
+    }
+    return Results.BadRequest(new { success = false, error });
+});
+
+// Stop a container
+app.MapPost("/api/containers/{hostId}/{containerId}/stop", async (
+    ConfigService config,
+    DockerClientFactory clientFactory,
+    string hostId,
+    string containerId) =>
+{
+    var host = config.GetHost(hostId);
+    if (host == null)
+    {
+        return Results.NotFound(new { error = "Host not found" });
+    }
+
+    var client = clientFactory.CreateClient(host);
+    var (success, error) = await client.StopContainerAsync(containerId);
+
+    if (success)
+    {
+        return Results.Ok(new { success = true, action = "stop", containerId });
+    }
+    return Results.BadRequest(new { success = false, error });
+});
+
+// Restart a container
+app.MapPost("/api/containers/{hostId}/{containerId}/restart", async (
+    ConfigService config,
+    DockerClientFactory clientFactory,
+    string hostId,
+    string containerId) =>
+{
+    var host = config.GetHost(hostId);
+    if (host == null)
+    {
+        return Results.NotFound(new { error = "Host not found" });
+    }
+
+    var client = clientFactory.CreateClient(host);
+    var (success, error) = await client.RestartContainerAsync(containerId);
+
+    if (success)
+    {
+        return Results.Ok(new { success = true, action = "restart", containerId });
+    }
+    return Results.BadRequest(new { success = false, error });
+});
+
+// Pause a container
+app.MapPost("/api/containers/{hostId}/{containerId}/pause", async (
+    ConfigService config,
+    DockerClientFactory clientFactory,
+    string hostId,
+    string containerId) =>
+{
+    var host = config.GetHost(hostId);
+    if (host == null)
+    {
+        return Results.NotFound(new { error = "Host not found" });
+    }
+
+    var client = clientFactory.CreateClient(host);
+    var (success, error) = await client.PauseContainerAsync(containerId);
+
+    if (success)
+    {
+        return Results.Ok(new { success = true, action = "pause", containerId });
+    }
+    return Results.BadRequest(new { success = false, error });
+});
+
+// Unpause a container
+app.MapPost("/api/containers/{hostId}/{containerId}/unpause", async (
+    ConfigService config,
+    DockerClientFactory clientFactory,
+    string hostId,
+    string containerId) =>
+{
+    var host = config.GetHost(hostId);
+    if (host == null)
+    {
+        return Results.NotFound(new { error = "Host not found" });
+    }
+
+    var client = clientFactory.CreateClient(host);
+    var (success, error) = await client.UnpauseContainerAsync(containerId);
+
+    if (success)
+    {
+        return Results.Ok(new { success = true, action = "unpause", containerId });
+    }
+    return Results.BadRequest(new { success = false, error });
+});
+
+// =====================
 // Debug Endpoints
 // =====================
 

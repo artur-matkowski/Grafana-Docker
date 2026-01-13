@@ -69,5 +69,12 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
         max: 8,
         integer: true,
       },
+    })
+    .addBooleanSwitch({
+      path: 'enableContainerControls',
+      name: 'Enable Container Controls',
+      description: 'Show start/stop/restart/pause buttons for each container',
+      defaultValue: false,
+      category: ['Controls'],
     });
 });

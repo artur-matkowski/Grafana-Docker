@@ -5,6 +5,7 @@ export interface SimpleOptions {
   selectedMetrics: string[];
   containersPerRow: number;
   metricsPerRow: number;
+  enableContainerControls: boolean;
 }
 
 // Metric definition for display configuration
