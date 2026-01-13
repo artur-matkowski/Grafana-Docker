@@ -1,0 +1,54 @@
+{
+  "currentLesson": "lesson-06-extend-metrics-and-status",
+  "lessons": {
+    "lesson-01-setup-and-hello-panel": {
+      "status": "completed",
+      "lastUpdated": "2026-01-09T00:00:00Z",
+      "notes": "Node 22 installed via nvm. Plugin scaffolded with @grafana/create-plugin. SimplePanel.tsx modified to show 'Docker Metrix Panel - Hello'. Grafana 12.3.0 running via Docker. Panel visible in dashboard.",
+      "commitShas": []
+    },
+    "lesson-02-panel-dataflow-and-ts-basics": {
+      "status": "completed",
+      "lastUpdated": "2026-01-09T00:00:00Z",
+      "notes": "Successfully connected TestData DB to panel. Panel extracts and displays field name, first value (10), latest value (30), total points (5). Understands data frame structure and can access numeric field values via TypeScript.",
+      "commitShas": []
+    },
+    "lesson-03-csharp-collector-and-schema": {
+      "status": "completed",
+      "lastUpdated": "2026-01-13T00:00:00Z",
+      "notes": "Completed with TDD approach. Created xUnit test project (18 tests). Implemented: ContainerMetricSnapshot record (18 fields incl. PSI pressure metrics), HostMetricSnapshot record (8 fields), MetricsStore class (thread-safe, 24h rolling retention). Learned C# records, nullable types, value equality, xUnit testing.",
+      "commitShas": []
+    },
+    "lesson-04-persistence-and-read-api": {
+      "status": "completed",
+      "lastUpdated": "2026-01-13T00:00:00Z",
+      "notes": "Refactored to ASP.NET Core minimal APIs. Created: DockerClient (parses Docker stats to snapshots), DockerCollectorService (BackgroundService polling every 10s), HTTP API endpoints (/api/containers, /api/metrics/containers, /api/metrics/hosts, /api/stats). CORS enabled. Tested end-to-end with curl - successfully collecting metrics from 9 containers.",
+      "commitShas": []
+    },
+    "lesson-05-wire-grafana-to-data": {
+      "status": "completed",
+      "lastUpdated": "2026-01-13T00:00:00Z",
+      "notes": "Panel now fetches real data from collector API. Added panel options (apiUrl, containerId, showMemory, showCpu, showNetwork). Created card-based metric display with SVG sparklines. Shows: memory (MB + %), CPU %, network RX/TX, disk read/write, running status. Auto-refreshes every 10s. Learned React hooks (useState, useEffect), fetch API, TypeScript interfaces.",
+      "commitShas": []
+    },
+    "lesson-06-extend-metrics-and-status": {
+      "status": "not_started",
+      "lastUpdated": null,
+      "notes": "",
+      "commitShas": []
+    },
+    "lesson-07-polish-and-cv-summary": {
+      "status": "not_started",
+      "lastUpdated": null,
+      "notes": "",
+      "commitShas": []
+    }
+  },
+  "migrationNotes": [
+    {
+      "date": "2026-01-13",
+      "change": "Rescoped to in-memory storage",
+      "rationale": "Postgres adds complexity without significant learning value. 24h of metrics fits easily in <50MB RAM. Simpler architecture focused on Grafana plugin development."
+    }
+  ]
+}

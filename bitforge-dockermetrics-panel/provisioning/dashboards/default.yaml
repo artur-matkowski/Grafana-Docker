@@ -1,0 +1,7 @@
+apiVersion: 1
+
+providers:
+  - name: 'Docker Metrics Panel'
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards
