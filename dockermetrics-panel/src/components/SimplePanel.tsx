@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { PanelProps } from '@grafana/data';
-import { SimpleOptions, ContainerMetricSnapshot, ContainerInfo, ContainerStatus, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS } from 'types';
+import { SimpleOptions, ContainerMetrics, ContainerInfo, ContainerStatus, HostConfig, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DEFAULT_HOSTS } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 
@@ -212,7 +212,6 @@ const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatV
   const max = Math.max(...data);
   const range = max - min || 1;
 
-  // Generate points as percentage-based coordinates (0-100 for x, actual pixels for y)
   const points = data
     .map((value, index) => {
       const x = (index / (data.length - 1)) * 100;
@@ -226,7 +225,6 @@ const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatV
 
   return (
     <div style={{ position: 'relative', height, display: 'flex' }}>
-      {/* Chart area - takes remaining space */}
       <div style={{ flex: 1, position: 'relative', minWidth: 0 }}>
         <svg
           width="100%"
@@ -235,15 +233,12 @@ const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatV
           preserveAspectRatio="none"
           style={{ display: 'block' }}
         >
-          {/* Grid lines */}
           <line x1="0" y1={padding} x2="100" y2={padding} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
           <line x1="0" y1={padding + chartHeight / 2} x2="100" y2={padding + chartHeight / 2} stroke="rgba(255,255,255,0.05)" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
           <line x1="0" y1={padding + chartHeight} x2="100" y2={padding + chartHeight} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
-          {/* Data line */}
           <polyline fill="none" stroke={color} strokeWidth="1.5" points={points} vectorEffect="non-scaling-stroke" />
         </svg>
       </div>
-      {/* Scale labels - fixed width, not stretched */}
       <div
         style={{
           width: '32px',
@@ -269,17 +264,18 @@ interface ContainerWithMetrics {
   containerName: string;
   hostId: string;
   hostName: string;
-  metrics: ContainerMetricSnapshot[];
-  latest: ContainerMetricSnapshot | null;
-  rateData: Map<string, number[]>; // Calculated rate data for rate metrics
-  latestRates: Map<string, number>; // Latest rate values
+  hostUrl: string;
+  metrics: ContainerMetrics[];
+  latest: ContainerMetrics | null;
+  rateData: Map<string, number[]>;
+  latestRates: Map<string, number>;
 }
 
 // Calculate rate (delta/time) from cumulative values
 function calculateRates(
-  metrics: ContainerMetricSnapshot[],
+  metrics: ContainerMetrics[],
   metricKey: string,
-  getValue: (s: ContainerMetricSnapshot) => number | null
+  getValue: (s: ContainerMetrics) => number | null
 ): number[] {
   if (metrics.length < 2) return [];
 
@@ -296,9 +292,7 @@ function calculateRates(
     if (timeDelta <= 0) continue;
 
     const valueDelta = currVal - prevVal;
-    // Handle counter resets (when container restarts)
     const rate = valueDelta >= 0 ? valueDelta / timeDelta : 0;
-    // Convert to KB/s
     rates.push(rate / 1024);
   }
 
@@ -309,8 +303,7 @@ function calculateRates(
 type ContainerAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause';
 
 interface ContainerControlsProps {
-  apiUrl: string;
-  hostId: string;
+  hostUrl: string;
   containerId: string;
   isRunning: boolean;
   isPaused: boolean;
@@ -319,8 +312,7 @@ interface ContainerControlsProps {
 }
 
 const ContainerControls: React.FC<ContainerControlsProps> = ({
-  apiUrl,
-  hostId,
+  hostUrl,
   containerId,
   isRunning,
   isPaused,
@@ -330,14 +322,13 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
   const [loading, setLoading] = useState<ContainerAction | null>(null);
 
   const pollForStatus = useCallback(async (expectedRunning: boolean, expectedPaused: boolean) => {
-    const maxAttempts = 20; // 10 seconds max (500ms * 20)
+    const maxAttempts = 20;
     for (let i = 0; i < maxAttempts; i++) {
       try {
-        const response = await fetch(`${apiUrl}/api/containers/${hostId}/${containerId}/status`);
+        const response = await fetch(`${hostUrl}/api/containers/${containerId}/status`);
         if (response.ok) {
           const status: ContainerStatus = await response.json();
           onStatusUpdate?.(status);
-          // Check if we've reached the expected state
           if (status.isRunning === expectedRunning && status.isPaused === expectedPaused) {
             return;
           }
@@ -347,19 +338,18 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
       }
       await new Promise(resolve => setTimeout(resolve, 500));
     }
-  }, [apiUrl, hostId, containerId, onStatusUpdate]);
+  }, [hostUrl, containerId, onStatusUpdate]);
 
   const executeAction = async (action: ContainerAction) => {
     setLoading(action);
     try {
-      const response = await fetch(`${apiUrl}/api/containers/${hostId}/${containerId}/${action}`, {
+      const response = await fetch(`${hostUrl}/api/containers/${containerId}/${action}`, {
         method: 'POST',
       });
       if (!response.ok) {
         const data = await response.json();
         console.error(`Failed to ${action} container:`, data.error);
       } else {
-        // Determine expected state based on action
         let expectedRunning = isRunning;
         let expectedPaused = isPaused;
         switch (action) {
@@ -384,7 +374,6 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
             expectedPaused = false;
             break;
         }
-        // Poll for status update
         pollForStatus(expectedRunning, expectedPaused);
       }
     } catch (err) {
@@ -447,11 +436,12 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
 };
 
 export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange }) => {
+  const hosts = options.hosts || DEFAULT_HOSTS;
+  const enabledHosts = useMemo(() => hosts.filter((h: HostConfig) => h.enabled), [hosts]);
   const containersPerRow = options.containersPerRow || 0;
   const metricsPerRow = options.metricsPerRow || 0;
   const styles = useStyles2(getStyles);
 
-  // Dynamic grid styles based on options
   const containerGridStyle = {
     gridTemplateColumns:
       containersPerRow > 0
@@ -464,7 +454,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
       metricsPerRow > 0 ? `repeat(${metricsPerRow}, 1fr)` : 'repeat(auto-fill, minmax(120px, 1fr))',
   };
 
-  const [allMetrics, setAllMetrics] = useState<ContainerMetricSnapshot[]>([]);
+  const [allMetrics, setAllMetrics] = useState<ContainerMetrics[]>([]);
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -472,7 +462,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   // Track real-time status overrides (from control actions)
   const [statusOverrides, setStatusOverrides] = useState<Map<string, ContainerStatus>>(new Map());
 
-  // Callback to handle real-time status updates from control actions
   const handleStatusUpdate = useCallback((status: ContainerStatus) => {
     setStatusOverrides(prev => {
       const next = new Map(prev);
@@ -486,15 +475,40 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     return AVAILABLE_METRICS.filter((m) => selected.includes(m.key));
   }, [options.selectedMetrics]);
 
+  // Fetch containers from all enabled hosts
   useEffect(() => {
     const fetchContainers = async () => {
-      if (!options.apiUrl) return;
+      if (enabledHosts.length === 0) {
+        setContainers([]);
+        return;
+      }
+
       try {
-        const response = await fetch(`${options.apiUrl}/api/containers`);
-        if (response.ok) {
-          const data: ContainerInfo[] = await response.json();
-          setContainers(data);
-        }
+        const allContainers: ContainerInfo[] = [];
+
+        await Promise.all(
+          enabledHosts.map(async (host: HostConfig) => {
+            try {
+              const response = await fetch(`${host.url}/api/containers?all=true`, {
+                signal: AbortSignal.timeout(5000),
+              });
+              if (response.ok) {
+                const data = await response.json();
+                for (const container of data) {
+                  allContainers.push({
+                    ...container,
+                    hostId: host.id,
+                    hostName: host.name,
+                  });
+                }
+              }
+            } catch {
+              // Ignore individual host errors
+            }
+          })
+        );
+
+        setContainers(allContainers);
       } catch {
         // Ignore errors
       }
@@ -503,7 +517,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     fetchContainers();
     const interval = setInterval(fetchContainers, 30000);
     return () => clearInterval(interval);
-  }, [options.apiUrl]);
+  }, [enabledHosts]);
 
   const targetContainerIds = useMemo(() => {
     if (options.showAllContainers) {
@@ -512,10 +526,11 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     return options.containerIds || [];
   }, [options.showAllContainers, options.containerIds, containers]);
 
+  // Fetch metrics from all enabled hosts
   useEffect(() => {
     const fetchMetrics = async () => {
-      if (!options.apiUrl) {
-        setError('Please configure API URL in panel options');
+      if (enabledHosts.length === 0) {
+        setError('No agents configured. Add Docker Metrics Agents in panel options.');
         setAllMetrics([]);
         return;
       }
@@ -526,29 +541,44 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
         return;
       }
 
-      if (targetContainerIds.length === 0) {
-        setAllMetrics([]);
-        return;
-      }
-
       setLoading(true);
       setError(null);
 
       try {
         const from = timeRange.from.toISOString();
         const to = timeRange.to.toISOString();
+        const allFetchedMetrics: ContainerMetrics[] = [];
 
-        const metricsPromises = targetContainerIds.map(async (containerId) => {
-          const url = `${options.apiUrl}/api/metrics/containers?id=${containerId}&from=${from}&to=${to}`;
-          const response = await fetch(url);
-          if (!response.ok) return [];
-          return response.json() as Promise<ContainerMetricSnapshot[]>;
-        });
+        await Promise.all(
+          enabledHosts.map(async (host: HostConfig) => {
+            try {
+              // Fetch metrics from each host
+              const url = `${host.url}/api/metrics?from=${from}&to=${to}`;
+              const response = await fetch(url, {
+                signal: AbortSignal.timeout(10000),
+              });
 
-        const results = await Promise.all(metricsPromises);
-        const combined = results.flat();
-        setAllMetrics(combined);
-        // Clear status overrides when fresh metrics arrive - they should now reflect the real state
+              if (response.ok) {
+                const metrics: ContainerMetrics[] = await response.json();
+                // Add host info to each metric
+                for (const metric of metrics) {
+                  // Filter by selected containers if not showing all
+                  if (options.showAllContainers || targetContainerIds.includes(metric.containerId)) {
+                    allFetchedMetrics.push({
+                      ...metric,
+                      hostId: host.id,
+                      hostName: host.name,
+                    });
+                  }
+                }
+              }
+            } catch {
+              // Ignore individual host errors
+            }
+          })
+        );
+
+        setAllMetrics(allFetchedMetrics);
         setStatusOverrides(new Map());
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch metrics');
@@ -562,7 +592,16 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     const interval = setInterval(fetchMetrics, 10000);
 
     return () => clearInterval(interval);
-  }, [options.apiUrl, targetContainerIds, options.showAllContainers, timeRange.from.valueOf(), timeRange.to.valueOf()]);
+  }, [enabledHosts, targetContainerIds, options.showAllContainers, timeRange.from.valueOf(), timeRange.to.valueOf()]);
+
+  // Build host URL lookup
+  const hostUrlMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const host of hosts) {
+      map.set(host.id, host.url);
+    }
+    return map;
+  }, [hosts]);
 
   const containersByHost = useMemo(() => {
     const byContainer = new Map<string, ContainerWithMetrics>();
@@ -574,6 +613,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           containerName: c.containerName,
           hostId: c.hostId,
           hostName: c.hostName,
+          hostUrl: hostUrlMap.get(c.hostId) || '',
           metrics: [],
           latest: null,
           rateData: new Map(),
@@ -590,6 +630,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           containerName: m.containerName,
           hostId: m.hostId,
           hostName: m.hostName,
+          hostUrl: hostUrlMap.get(m.hostId) || '',
           metrics: [],
           latest: null,
           rateData: new Map(),
@@ -606,7 +647,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
         container.metrics.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
         container.latest = container.metrics[container.metrics.length - 1];
 
-        // Calculate rates for rate-based metrics
         for (const metricDef of AVAILABLE_METRICS.filter((m) => m.isRate)) {
           const rates = calculateRates(container.metrics, metricDef.key, metricDef.getValue);
           container.rateData.set(metricDef.key, rates);
@@ -617,13 +657,14 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
       }
     }
 
-    const byHost = new Map<string, { hostId: string; hostName: string; containers: ContainerWithMetrics[] }>();
+    const byHost = new Map<string, { hostId: string; hostName: string; hostUrl: string; containers: ContainerWithMetrics[] }>();
     for (const container of byContainer.values()) {
       const hostKey = container.hostId;
       if (!byHost.has(hostKey)) {
         byHost.set(hostKey, {
           hostId: container.hostId,
           hostName: container.hostName,
+          hostUrl: container.hostUrl,
           containers: [],
         });
       }
@@ -635,7 +676,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     }
 
     return Array.from(byHost.values()).sort((a, b) => a.hostName.localeCompare(b.hostName));
-  }, [containers, allMetrics, options.showAllContainers, options.containerIds]);
+  }, [containers, allMetrics, options.showAllContainers, options.containerIds, hostUrlMap]);
 
   const totalContainers = containersByHost.reduce((sum, h) => sum + h.containers.length, 0);
   const totalHosts = containersByHost.length;
@@ -643,7 +684,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   const renderMetric = (container: ContainerWithMetrics, metricDef: MetricDefinition) => {
     const latest = container.latest;
 
-    // For rate metrics, use calculated rate data
     if (metricDef.isRate) {
       const rateData = container.rateData.get(metricDef.key) || [];
       const latestRate = container.latestRates.get(metricDef.key);
@@ -671,7 +711,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
       );
     }
 
-    // For non-rate metrics, use direct values
     const rawValue = latest ? metricDef.getValue(latest) : null;
 
     if (rawValue === null || rawValue === undefined) {
@@ -706,7 +745,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
         <div className={styles.info}>
           <p>Configuration:</p>
           <ul>
-            <li>API URL: {options.apiUrl || '(not set)'}</li>
+            <li>Agents: {enabledHosts.length} enabled</li>
             <li>Show All: {options.showAllContainers ? 'Yes' : 'No'}</li>
             <li>Selected: {(options.containerIds || []).length} containers</li>
           </ul>
@@ -718,7 +757,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   if (loading && allMetrics.length === 0 && targetContainerIds.length > 0) {
     return (
       <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
-        <div className={styles.loading}>Loading metrics for {targetContainerIds.length} containers...</div>
+        <div className={styles.loading}>Loading metrics from {enabledHosts.length} agent(s)...</div>
       </div>
     );
   }
@@ -730,9 +769,11 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           No containers to display.
           <br />
           <span style={{ fontSize: '11px' }}>
-            {options.showAllContainers
-              ? 'Waiting for containers to be discovered...'
-              : 'Select containers in panel options or enable "Show All Containers".'}
+            {enabledHosts.length === 0
+              ? 'Add and enable Docker Metrics Agents in panel options.'
+              : options.showAllContainers
+                ? 'Waiting for containers to be discovered...'
+                : 'Select containers in panel options or enable "Show All Containers".'}
           </span>
         </div>
       </div>
@@ -776,7 +817,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
 
           <div className={styles.containersGrid} style={containerGridStyle}>
             {host.containers.map((container) => {
-              // Check for real-time status override first
               const statusOverride = statusOverrides.get(container.containerId);
               const isRunning = statusOverride?.isRunning ?? container.latest?.isRunning ?? false;
               const isPaused = statusOverride?.isPaused ?? container.latest?.isPaused ?? false;
@@ -809,10 +849,9 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                   {selectedMetricDefs.map((metricDef) => renderMetric(container, metricDef))}
                 </div>
 
-                {options.enableContainerControls && (
+                {options.enableContainerControls && container.hostUrl && (
                   <ContainerControls
-                    apiUrl={options.apiUrl}
-                    hostId={container.hostId}
+                    hostUrl={container.hostUrl}
                     containerId={container.containerId}
                     isRunning={isRunning}
                     isPaused={isPaused}

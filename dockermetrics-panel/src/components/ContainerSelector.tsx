@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { css } from '@emotion/css';
-import { ContainerInfo } from '../types';
+import { ContainerInfo, HostConfig } from '../types';
 
 interface ContainerSelectorProps {
-  apiUrl: string;
+  hosts: HostConfig[];
   selectedContainerIds: string[];
   showAllContainers: boolean;
   onSelectionChange: (containerIds: string[]) => void;
@@ -145,7 +145,7 @@ const styles = {
 };
 
 export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
-  apiUrl,
+  hosts,
   selectedContainerIds,
   showAllContainers,
   onSelectionChange,
@@ -156,25 +156,51 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
+  const enabledHosts = hosts.filter((h) => h.enabled);
+
+  // Fetch containers from all enabled hosts
   const fetchContainers = useCallback(async () => {
-    if (!apiUrl) return;
+    if (enabledHosts.length === 0) {
+      setContainers([]);
+      return;
+    }
 
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch(`${apiUrl}/api/containers`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch containers: ${response.status}`);
-      }
-      const data: ContainerInfo[] = await response.json();
-      setContainers(data);
+      const allContainers: ContainerInfo[] = [];
+
+      await Promise.all(
+        enabledHosts.map(async (host) => {
+          try {
+            const response = await fetch(`${host.url}/api/containers?all=true`, {
+              signal: AbortSignal.timeout(5000),
+            });
+            if (response.ok) {
+              const data = await response.json();
+              // Add host info to each container
+              for (const container of data) {
+                allContainers.push({
+                  ...container,
+                  hostId: host.id,
+                  hostName: host.name,
+                });
+              }
+            }
+          } catch {
+            // Ignore individual host errors
+          }
+        })
+      );
+
+      setContainers(allContainers);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch containers');
     } finally {
       setLoading(false);
     }
-  }, [apiUrl]);
+  }, [enabledHosts]);
 
   useEffect(() => {
     fetchContainers();
@@ -223,8 +249,8 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
     }
   };
 
-  if (!apiUrl) {
-    return <div className={styles.emptyState}>Configure API URL first</div>;
+  if (enabledHosts.length === 0) {
+    return <div className={styles.emptyState}>Configure and enable agents first in the Agents section</div>;
   }
 
   return (
@@ -266,7 +292,7 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
       )}
 
       {!loading && containers.length === 0 && (
-        <div className={styles.emptyState}>No containers found</div>
+        <div className={styles.emptyState}>No containers found on enabled agents</div>
       )}
 
       <div className={styles.containerList}>

@@ -1,11 +1,95 @@
+// Panel options
 export interface SimpleOptions {
-  apiUrl: string;
+  hosts: HostConfig[];
   containerIds: string[];
   showAllContainers: boolean;
   selectedMetrics: string[];
   containersPerRow: number;
   metricsPerRow: number;
   enableContainerControls: boolean;
+}
+
+// Host configuration (stored in panel options)
+export interface HostConfig {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+}
+
+// Host with runtime status
+export interface HostStatus extends HostConfig {
+  isHealthy: boolean;
+  lastError: string | null;
+  hostname: string | null;
+  agentVersion: string | null;
+  dockerVersion: string | null;
+  psiSupported: boolean;
+  containerCount: number;
+}
+
+// Agent info response
+export interface AgentInfo {
+  hostname: string;
+  agentVersion: string;
+  dockerVersion: string;
+  dockerConnected: boolean;
+  psiSupported: boolean;
+}
+
+// Container info for listing
+export interface ContainerInfo {
+  hostId: string;
+  hostName: string;
+  containerId: string;
+  containerName: string;
+  state: string;
+  isRunning: boolean;
+  isPaused: boolean;
+}
+
+// Real-time container status
+export interface ContainerStatus {
+  containerId: string;
+  containerName: string;
+  status: string;
+  isRunning: boolean;
+  isPaused: boolean;
+}
+
+// PSI metrics
+export interface PsiMetrics {
+  some10: number;
+  some60: number;
+  some300: number;
+  full10: number;
+  full60: number;
+  full300: number;
+}
+
+// Container metrics from agent
+export interface ContainerMetrics {
+  // Added by panel for multi-host support
+  hostId: string;
+  hostName: string;
+
+  // From agent
+  containerId: string;
+  containerName: string;
+  timestamp: string;
+  cpuPercent: number;
+  memoryBytes: number;
+  memoryPercent: number;
+  networkRxBytes: number;
+  networkTxBytes: number;
+  diskReadBytes: number;
+  diskWriteBytes: number;
+  uptimeSeconds: number;
+  isRunning: boolean;
+  isPaused: boolean;
+  cpuPressure: PsiMetrics | null;
+  memoryPressure: PsiMetrics | null;
+  ioPressure: PsiMetrics | null;
 }
 
 // Metric definition for display configuration
@@ -15,11 +99,11 @@ export interface MetricDefinition {
   unit: string;
   color: string;
   format: (value: number) => string;
-  getValue: (snapshot: ContainerMetricSnapshot) => number | null;
-  isRate?: boolean; // If true, calculate rate (delta/time) from cumulative values
+  getValue: (snapshot: ContainerMetrics) => number | null;
+  isRate?: boolean;
 }
 
-// All available metrics from the collector
+// All available metrics
 export const AVAILABLE_METRICS: MetricDefinition[] = [
   {
     key: 'cpuPercent',
@@ -89,13 +173,14 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
     format: (v) => (v / 3600).toFixed(1),
     getValue: (s) => s.uptimeSeconds,
   },
+  // PSI CPU metrics
   {
     key: 'cpuPressureSome',
-    label: 'CPU Pressure (some)',
+    label: 'CPU Pressure',
     unit: '%',
     color: '#FF6B6B',
     format: (v) => v.toFixed(2),
-    getValue: (s) => s.cpuPressureSome,
+    getValue: (s) => s.cpuPressure?.some10 ?? null,
   },
   {
     key: 'cpuPressureFull',
@@ -103,15 +188,16 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
     unit: '%',
     color: '#EE5A5A',
     format: (v) => v.toFixed(2),
-    getValue: (s) => s.cpuPressureFull,
+    getValue: (s) => s.cpuPressure?.full10 ?? null,
   },
+  // PSI Memory metrics
   {
     key: 'memoryPressureSome',
-    label: 'Mem Pressure (some)',
+    label: 'Mem Pressure',
     unit: '%',
     color: '#4ECDC4',
     format: (v) => v.toFixed(2),
-    getValue: (s) => s.memoryPressureSome,
+    getValue: (s) => s.memoryPressure?.some10 ?? null,
   },
   {
     key: 'memoryPressureFull',
@@ -119,15 +205,16 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
     unit: '%',
     color: '#3DBDB5',
     format: (v) => v.toFixed(2),
-    getValue: (s) => s.memoryPressureFull,
+    getValue: (s) => s.memoryPressure?.full10 ?? null,
   },
+  // PSI I/O metrics
   {
     key: 'ioPressureSome',
-    label: 'I/O Pressure (some)',
+    label: 'I/O Pressure',
     unit: '%',
     color: '#FFE66D',
     format: (v) => v.toFixed(2),
-    getValue: (s) => s.ioPressureSome,
+    getValue: (s) => s.ioPressure?.some10 ?? null,
   },
   {
     key: 'ioPressureFull',
@@ -135,93 +222,12 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
     unit: '%',
     color: '#FFD93D',
     format: (v) => v.toFixed(2),
-    getValue: (s) => s.ioPressureFull,
+    getValue: (s) => s.ioPressure?.full10 ?? null,
   },
 ];
 
 // Default metrics to show
 export const DEFAULT_METRICS = ['cpuPercent', 'memoryBytes'];
 
-// Docker Host Configuration
-export interface DockerHostConfig {
-  id: string;
-  name: string;
-  url: string;
-  enabled: boolean;
-}
-
-// Docker Host with runtime status
-export interface DockerHostStatus {
-  id: string;
-  name: string;
-  url: string;
-  enabled: boolean;
-  lastSeen: string | null;
-  isHealthy: boolean;
-  lastError: string | null;
-  containerCount: number;
-}
-
-// Collector Configuration
-export interface CollectorConfig {
-  hosts: DockerHostConfig[];
-  settings: CollectorSettings;
-}
-
-export interface CollectorSettings {
-  pollIntervalSeconds: number;
-  retentionHours: number;
-}
-
-// Container info for listing
-export interface ContainerInfo {
-  hostId: string;
-  hostName: string;
-  containerId: string;
-  containerName: string;
-}
-
-// Types matching the C# API responses
-export interface ContainerMetricSnapshot {
-  hostId: string;
-  hostName: string;
-  containerId: string;
-  containerName: string;
-  timestamp: string;
-  cpuPercent: number;
-  memoryBytes: number;
-  memoryPercent: number;
-  networkRxBytes: number;
-  networkTxBytes: number;
-  diskReadBytes: number;
-  diskWriteBytes: number;
-  uptimeSeconds: number;
-  isRunning: boolean;
-  isPaused: boolean;
-  cpuPressureSome: number | null;
-  cpuPressureFull: number | null;
-  memoryPressureSome: number | null;
-  memoryPressureFull: number | null;
-  ioPressureSome: number | null;
-  ioPressureFull: number | null;
-}
-
-// Real-time container status from collector
-export interface ContainerStatus {
-  containerId: string;
-  containerName: string;
-  status: string;
-  isRunning: boolean;
-  isPaused: boolean;
-}
-
-export interface HostMetricSnapshot {
-  hostname: string;
-  timestamp: string;
-  cpuPercent: number;
-  cpuFrequencyMhz: number;
-  memoryBytes: number;
-  memoryPercent: number;
-  uptimeSeconds: number;
-  isUp: boolean;
-}
+// Default hosts (empty)
+export const DEFAULT_HOSTS: HostConfig[] = [];

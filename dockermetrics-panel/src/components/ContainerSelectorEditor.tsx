@@ -1,6 +1,6 @@
 import React from 'react';
 import { StandardEditorProps } from '@grafana/data';
-import { SimpleOptions } from '../types';
+import { SimpleOptions, DEFAULT_HOSTS } from '../types';
 import { ContainerSelector } from './ContainerSelector';
 
 export const ContainerSelectorEditor: React.FC<StandardEditorProps<string[], any, SimpleOptions>> = ({
@@ -16,9 +16,9 @@ export const ContainerSelectorEditor: React.FC<StandardEditorProps<string[], any
 
   return (
     <ContainerSelector
-      apiUrl={context.options.apiUrl}
+      hosts={context.options?.hosts || DEFAULT_HOSTS}
       selectedContainerIds={value || []}
-      showAllContainers={context.options.showAllContainers || false}
+      showAllContainers={context.options?.showAllContainers || false}
       onSelectionChange={(containerIds) => onChange(containerIds)}
       onShowAllChange={handleShowAllChange}
     />

@@ -1,26 +1,18 @@
-using DockerMetricsCollector.Models;
-using DockerMetricsCollector.Services;
+using DockerMetricsAgent.Models;
+using DockerMetricsAgent.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Determine config file path
-var configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
+// Get hostname for agent info
+var hostname = Environment.GetEnvironmentVariable("HOSTNAME") ??
+               Environment.GetEnvironmentVariable("COMPUTERNAME") ??
+               System.Net.Dns.GetHostName();
 
-// Register HttpClient factory
-builder.Services.AddHttpClient();
-
-// Register singleton services
-builder.Services.AddSingleton<MetricsStore>();
-builder.Services.AddSingleton<HostHealthService>();
-builder.Services.AddSingleton<DockerClientFactory>();
-builder.Services.AddSingleton(sp => new ConfigService(
-    configPath,
-    sp.GetRequiredService<ILogger<ConfigService>>(),
-    sp.GetRequiredService<IHttpClientFactory>().CreateClient()
-));
-
-// Register background collector service
-builder.Services.AddHostedService<DockerCollectorService>();
+// Register services
+builder.Services.AddSingleton<PsiReader>();
+builder.Services.AddSingleton<LocalDockerClient>();
+builder.Services.AddSingleton<MetricsCache>();
+builder.Services.AddHostedService<CollectorService>();
 
 // Add CORS for Grafana panel access
 builder.Services.AddCors(options =>
@@ -38,134 +30,74 @@ var app = builder.Build();
 // Enable CORS
 app.UseCors();
 
+const string AgentVersion = "2.0.0";
+
 // =====================
-// Health Check
+// Health & Info Endpoints
 // =====================
-app.MapGet("/", () => new
+
+app.MapGet("/", (LocalDockerClient docker, PsiReader psi) => new
 {
-    service = "Docker Metrics Collector",
+    service = "Docker Metrics Agent",
+    version = AgentVersion,
+    hostname = hostname,
     status = "running",
     timestamp = DateTimeOffset.UtcNow
 });
 
-// =====================
-// Configuration Endpoints
-// =====================
-
-// Get current configuration
-app.MapGet("/api/config", (ConfigService config) =>
+app.MapGet("/api/info", async (LocalDockerClient docker, PsiReader psi) =>
 {
-    return Results.Ok(config.GetConfig());
-});
-
-// Add a new Docker host
-app.MapPost("/api/config/hosts", (ConfigService config, AddHostRequest request) =>
-{
-    if (string.IsNullOrWhiteSpace(request.Name))
-    {
-        return Results.BadRequest(new { error = "Name is required" });
-    }
-    if (string.IsNullOrWhiteSpace(request.Url))
-    {
-        return Results.BadRequest(new { error = "URL is required" });
-    }
-
-    var host = config.AddHost(request.Name, request.Url, request.Enabled ?? true);
-    return Results.Created($"/api/config/hosts/{host.Id}", host);
-});
-
-// Update a Docker host
-app.MapPut("/api/config/hosts/{id}", (ConfigService config, string id, UpdateHostRequest request) =>
-{
-    var success = config.UpdateHost(id, request.Name, request.Url, request.Enabled);
-    if (!success)
-    {
-        return Results.NotFound(new { error = "Host not found" });
-    }
-
-    var host = config.GetHost(id);
-    return Results.Ok(host);
-});
-
-// Remove a Docker host
-app.MapDelete("/api/config/hosts/{id}", (ConfigService config, string id) =>
-{
-    var success = config.RemoveHost(id);
-    if (!success)
-    {
-        return Results.NotFound(new { error = "Host not found" });
-    }
-    return Results.NoContent();
-});
-
-// =====================
-// Host Status Endpoints
-// =====================
-
-// Get all hosts with health status
-app.MapGet("/api/hosts", (ConfigService config, HostHealthService health, MetricsStore store) =>
-{
-    var hosts = config.GetHosts();
-    var healthInfo = health.GetAllHealth();
-    var containerCounts = store.GetContainerCountByHost();
-
-    var result = hosts.Select(h =>
-    {
-        healthInfo.TryGetValue(h.Id, out var hostHealth);
-        containerCounts.TryGetValue(h.Id, out var count);
-
-        return new DockerHostStatus(
-            Id: h.Id,
-            Name: h.Name,
-            Url: h.Url,
-            Enabled: h.Enabled,
-            LastSeen: hostHealth?.LastChecked,
-            IsHealthy: hostHealth?.IsHealthy ?? false,
-            LastError: hostHealth?.LastError,
-            ContainerCount: count
-        );
-    });
-
-    return Results.Ok(result);
+    var connected = await docker.CheckConnectionAsync();
+    return Results.Ok(new AgentInfo(
+        Hostname: hostname,
+        AgentVersion: AgentVersion,
+        DockerVersion: docker.DockerVersion ?? "unknown",
+        DockerConnected: connected,
+        PsiSupported: psi.IsPsiSupported
+    ));
 });
 
 // =====================
 // Container Endpoints
 // =====================
 
-// Get list of known containers (with host info)
-app.MapGet("/api/containers", (MetricsStore store, string? hostId) =>
+// List all containers
+app.MapGet("/api/containers", async (LocalDockerClient docker, bool? all) =>
 {
-    var containers = store.GetKnownContainers(hostId).ToList();
+    var containers = await docker.GetContainersAsync(all ?? false);
     return Results.Ok(containers);
 });
 
-// Get container metrics
-app.MapGet("/api/metrics/containers", (
-    MetricsStore store,
-    string? id,
-    string? hostId,
-    DateTimeOffset? from,
-    DateTimeOffset? to) =>
+// Get container status (real-time)
+app.MapGet("/api/containers/{containerId}/status", async (LocalDockerClient docker, string containerId) =>
 {
-    // Allow querying by hostId only (all containers from host)
-    // or by id only (specific container across all hosts)
-    // or by both (specific container on specific host)
-    var metrics = store.GetContainerMetrics(hostId, id, from, to).ToList();
-    return Results.Ok(metrics);
+    var status = await docker.GetContainerStatusAsync(containerId);
+    if (status == null)
+    {
+        return Results.NotFound(new { error = "Container not found" });
+    }
+    return Results.Ok(status);
 });
 
 // =====================
-// Host Metrics Endpoints
+// Metrics Endpoints
 // =====================
 
-// Get host metrics
-app.MapGet("/api/metrics/hosts", (
-    MetricsStore store,
+// Get all metrics (with optional filters)
+app.MapGet("/api/metrics", (
+    MetricsCache cache,
+    string? containerId,
     DateTimeOffset? from,
     DateTimeOffset? to) =>
 {
-    var metrics = store.GetHostMetrics(from, to).ToList();
+    var metrics = cache.GetMetrics(containerId, from, to).ToList();
+    return Results.Ok(metrics);
+});
+
+// Get latest metrics for all containers
+app.MapGet("/api/metrics/latest", (MetricsCache cache) =>
+{
+    var metrics = cache.GetLatestMetrics().ToList();
     return Results.Ok(metrics);
 });
 
@@ -173,181 +105,69 @@ app.MapGet("/api/metrics/hosts", (
 // Container Control Endpoints
 // =====================
 
-// Start a container
-app.MapPost("/api/containers/{hostId}/{containerId}/start", async (
-    ConfigService config,
-    DockerClientFactory clientFactory,
-    string hostId,
-    string containerId) =>
+app.MapPost("/api/containers/{containerId}/start", async (LocalDockerClient docker, string containerId) =>
 {
-    var host = config.GetHost(hostId);
-    if (host == null)
-    {
-        return Results.NotFound(new { error = "Host not found" });
-    }
-
-    var client = clientFactory.CreateClient(host);
-    var (success, error) = await client.StartContainerAsync(containerId);
-
+    var (success, error) = await docker.StartContainerAsync(containerId);
     if (success)
-    {
         return Results.Ok(new { success = true, action = "start", containerId });
-    }
     return Results.BadRequest(new { success = false, error });
 });
 
-// Stop a container
-app.MapPost("/api/containers/{hostId}/{containerId}/stop", async (
-    ConfigService config,
-    DockerClientFactory clientFactory,
-    string hostId,
-    string containerId) =>
+app.MapPost("/api/containers/{containerId}/stop", async (LocalDockerClient docker, string containerId) =>
 {
-    var host = config.GetHost(hostId);
-    if (host == null)
-    {
-        return Results.NotFound(new { error = "Host not found" });
-    }
-
-    var client = clientFactory.CreateClient(host);
-    var (success, error) = await client.StopContainerAsync(containerId);
-
+    var (success, error) = await docker.StopContainerAsync(containerId);
     if (success)
-    {
         return Results.Ok(new { success = true, action = "stop", containerId });
-    }
     return Results.BadRequest(new { success = false, error });
 });
 
-// Restart a container
-app.MapPost("/api/containers/{hostId}/{containerId}/restart", async (
-    ConfigService config,
-    DockerClientFactory clientFactory,
-    string hostId,
-    string containerId) =>
+app.MapPost("/api/containers/{containerId}/restart", async (LocalDockerClient docker, string containerId) =>
 {
-    var host = config.GetHost(hostId);
-    if (host == null)
-    {
-        return Results.NotFound(new { error = "Host not found" });
-    }
-
-    var client = clientFactory.CreateClient(host);
-    var (success, error) = await client.RestartContainerAsync(containerId);
-
+    var (success, error) = await docker.RestartContainerAsync(containerId);
     if (success)
-    {
         return Results.Ok(new { success = true, action = "restart", containerId });
-    }
     return Results.BadRequest(new { success = false, error });
 });
 
-// Pause a container
-app.MapPost("/api/containers/{hostId}/{containerId}/pause", async (
-    ConfigService config,
-    DockerClientFactory clientFactory,
-    string hostId,
-    string containerId) =>
+app.MapPost("/api/containers/{containerId}/pause", async (LocalDockerClient docker, string containerId) =>
 {
-    var host = config.GetHost(hostId);
-    if (host == null)
-    {
-        return Results.NotFound(new { error = "Host not found" });
-    }
-
-    var client = clientFactory.CreateClient(host);
-    var (success, error) = await client.PauseContainerAsync(containerId);
-
+    var (success, error) = await docker.PauseContainerAsync(containerId);
     if (success)
-    {
         return Results.Ok(new { success = true, action = "pause", containerId });
-    }
     return Results.BadRequest(new { success = false, error });
 });
 
-// Unpause a container
-app.MapPost("/api/containers/{hostId}/{containerId}/unpause", async (
-    ConfigService config,
-    DockerClientFactory clientFactory,
-    string hostId,
-    string containerId) =>
+app.MapPost("/api/containers/{containerId}/unpause", async (LocalDockerClient docker, string containerId) =>
 {
-    var host = config.GetHost(hostId);
-    if (host == null)
-    {
-        return Results.NotFound(new { error = "Host not found" });
-    }
-
-    var client = clientFactory.CreateClient(host);
-    var (success, error) = await client.UnpauseContainerAsync(containerId);
-
+    var (success, error) = await docker.UnpauseContainerAsync(containerId);
     if (success)
-    {
         return Results.Ok(new { success = true, action = "unpause", containerId });
-    }
     return Results.BadRequest(new { success = false, error });
 });
 
 // =====================
-// Real-time Status Endpoint
+// Stats Endpoint
 // =====================
 
-// Get real-time container status directly from Docker (bypasses metrics cache)
-app.MapGet("/api/containers/{hostId}/{containerId}/status", async (
-    ConfigService config,
-    DockerClientFactory clientFactory,
-    string hostId,
-    string containerId) =>
+app.MapGet("/api/stats", (MetricsCache cache, PsiReader psi) =>
 {
-    var host = config.GetHost(hostId);
-    if (host == null)
-    {
-        return Results.NotFound(new { error = "Host not found" });
-    }
-
-    var client = clientFactory.CreateClient(host);
-    var status = await client.GetContainerStatusAsync(containerId);
-
-    if (status == null)
-    {
-        return Results.NotFound(new { error = "Container not found or unreachable" });
-    }
-
-    return Results.Ok(status);
-});
-
-// =====================
-// Debug Endpoints
-// =====================
-
-// Get store stats (for debugging)
-app.MapGet("/api/stats", (MetricsStore store, ConfigService config) =>
-{
-    var containers = store.GetKnownContainers().ToList();
-    var containersByHost = containers
-        .GroupBy(c => c.HostName)
-        .ToDictionary(g => g.Key, g => g.Count());
-    var hostCount = store.GetHostMetrics().Count();
-
+    var (containerCount, totalSnapshots) = cache.GetStats();
     return Results.Ok(new
     {
-        hosts = config.GetHosts().Count,
-        containers = containers.Count,
-        containersByHost,
-        hostMetricsCount = hostCount,
+        hostname,
+        agentVersion = AgentVersion,
+        psiSupported = psi.IsPsiSupported,
+        containerCount,
+        totalSnapshots,
         timestamp = DateTimeOffset.UtcNow
     });
 });
 
-Console.WriteLine($"Docker Metrics Collector starting...");
-Console.WriteLine($"Config file: {configPath}");
-Console.WriteLine($"API available at: http://localhost:5000");
+// Get port from environment or use default
+var port = Environment.GetEnvironmentVariable("PORT") ?? "5000";
 
-app.Run("http://0.0.0.0:5000");
+Console.WriteLine($"Docker Metrics Agent v{AgentVersion} starting...");
+Console.WriteLine($"Hostname: {hostname}");
+Console.WriteLine($"API available at: http://0.0.0.0:{port}");
 
-// =====================
-// Request DTOs
-// =====================
-
-public record AddHostRequest(string? Name, string? Url, bool? Enabled);
-public record UpdateHostRequest(string? Name, string? Url, bool? Enabled);
+app.Run($"http://0.0.0.0:{port}");
