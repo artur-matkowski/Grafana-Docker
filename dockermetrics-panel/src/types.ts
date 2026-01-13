@@ -1,7 +1,7 @@
 export interface SimpleOptions {
   apiUrl: string;
-  containerId: string;
-  selectedHostId: string;
+  containerIds: string[];
+  showAllContainers: boolean;
   showMemory: boolean;
   showCpu: boolean;
   showNetwork: boolean;

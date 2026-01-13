@@ -21,19 +21,19 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       category: ['Docker Hosts'],
       editor: HostManagerEditor,
     })
-    .addTextInput({
-      path: 'selectedHostId',
-      name: 'Filter by Host ID',
-      description: 'Optional: Filter containers to a specific host (leave empty for all hosts)',
-      defaultValue: '',
-      category: ['Connection'],
+    .addBooleanSwitch({
+      path: 'showAllContainers',
+      name: 'Show All Containers',
+      description: 'Automatically include all containers (including new ones)',
+      defaultValue: true,
+      category: ['Containers'],
     })
     .addCustomEditor({
       id: 'containerSelector',
-      path: 'containerId',
-      name: 'Container',
-      description: 'Select a container to display metrics for',
-      category: ['Connection'],
+      path: 'containerIds',
+      name: 'Select Containers',
+      description: 'Choose which containers to display metrics for',
+      category: ['Containers'],
       editor: ContainerSelectorEditor,
     })
     .addBooleanSwitch({
@@ -41,20 +41,20 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       name: 'Show Memory',
       description: 'Display memory usage metrics',
       defaultValue: true,
-      category: ['Metrics'],
+      category: ['Display'],
     })
     .addBooleanSwitch({
       path: 'showCpu',
       name: 'Show CPU',
       description: 'Display CPU usage metrics',
       defaultValue: true,
-      category: ['Metrics'],
+      category: ['Display'],
     })
     .addBooleanSwitch({
       path: 'showNetwork',
       name: 'Show Network',
       description: 'Display network I/O metrics',
       defaultValue: false,
-      category: ['Metrics'],
+      category: ['Display'],
     });
 });
