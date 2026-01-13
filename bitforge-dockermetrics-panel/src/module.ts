@@ -2,6 +2,7 @@ import { PanelPlugin } from '@grafana/data';
 import { SimpleOptions } from './types';
 import { SimplePanel } from './components/SimplePanel';
 import { HostManagerEditor } from './components/HostManagerEditor';
+import { ContainerSelectorEditor } from './components/ContainerSelectorEditor';
 
 export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOptions((builder) => {
   return builder
@@ -27,12 +28,13 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       defaultValue: '',
       category: ['Connection'],
     })
-    .addTextInput({
+    .addCustomEditor({
+      id: 'containerSelector',
       path: 'containerId',
-      name: 'Container ID',
-      description: 'Docker container ID to display metrics for (full 64-char ID)',
-      defaultValue: '',
+      name: 'Container',
+      description: 'Select a container to display metrics for',
       category: ['Connection'],
+      editor: ContainerSelectorEditor,
     })
     .addBooleanSwitch({
       path: 'showMemory',
