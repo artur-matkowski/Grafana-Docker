@@ -5,6 +5,8 @@ namespace DockerMetricsCollector.Models;
 /// PSI (Pressure Stall Information) fields are nullable for systems that don't support them.
 /// </summary>
 public record ContainerMetricSnapshot(
+    string HostId,
+    string HostName,
     string ContainerId,
     string ContainerName,
     DateTimeOffset Timestamp,

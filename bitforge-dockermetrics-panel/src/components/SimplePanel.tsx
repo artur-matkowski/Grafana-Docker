@@ -94,6 +94,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
 
   const [metrics, setMetrics] = useState<ContainerMetricSnapshot[]>([]);
   const [containerName, setContainerName] = useState<string>('');
+  const [hostName, setHostName] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -112,7 +113,12 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
       try {
         const from = timeRange.from.toISOString();
         const to = timeRange.to.toISOString();
-        const url = `${options.apiUrl}/api/metrics/containers?id=${options.containerId}&from=${from}&to=${to}`;
+
+        // Build URL with optional hostId filter
+        let url = `${options.apiUrl}/api/metrics/containers?id=${options.containerId}&from=${from}&to=${to}`;
+        if (options.selectedHostId) {
+          url += `&hostId=${options.selectedHostId}`;
+        }
 
         const response = await fetch(url);
         if (!response.ok) {
@@ -124,6 +130,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
 
         if (data.length > 0) {
           setContainerName(data[0].containerName);
+          setHostName(data[0].hostName);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch metrics');
@@ -136,7 +143,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     fetchMetrics();
     const interval = setInterval(fetchMetrics, 10000);
     return () => clearInterval(interval);
-  }, [options.apiUrl, options.containerId, timeRange.from.valueOf(), timeRange.to.valueOf()]);
+  }, [options.apiUrl, options.containerId, options.selectedHostId, timeRange.from.valueOf(), timeRange.to.valueOf()]);
 
   // Calculate latest and average values
   const getLatestMetrics = () => {
@@ -209,6 +216,11 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px; overflow: auto;`)}>
       <div className={styles.info}>
         <strong>{containerName}</strong>
+        {hostName && (
+          <span style={{ color: '#888', marginLeft: '8px' }}>
+            @ {hostName}
+          </span>
+        )}
         <span style={{ color: latest?.isRunning ? '#73BF69' : '#FF5555', marginLeft: '8px' }}>
           {latest?.isRunning ? '● Running' : '● Stopped'}
         </span>

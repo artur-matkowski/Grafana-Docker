@@ -1,6 +1,7 @@
 import { PanelPlugin } from '@grafana/data';
 import { SimpleOptions } from './types';
 import { SimplePanel } from './components/SimplePanel';
+import { HostManagerEditor } from './components/HostManagerEditor';
 
 export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOptions((builder) => {
   return builder
@@ -9,6 +10,21 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       name: 'Collector API URL',
       description: 'URL of the Docker Metrics Collector API (e.g., http://localhost:5000)',
       defaultValue: 'http://localhost:5000',
+      category: ['Connection'],
+    })
+    .addCustomEditor({
+      id: 'hostManager',
+      path: 'hostConfig',
+      name: 'Docker Hosts',
+      description: 'Manage Docker hosts to collect metrics from',
+      category: ['Docker Hosts'],
+      editor: HostManagerEditor,
+    })
+    .addTextInput({
+      path: 'selectedHostId',
+      name: 'Filter by Host ID',
+      description: 'Optional: Filter containers to a specific host (leave empty for all hosts)',
+      defaultValue: '',
       category: ['Connection'],
     })
     .addTextInput({

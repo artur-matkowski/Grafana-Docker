@@ -10,17 +10,43 @@ public class DockerClient
 {
     private readonly HttpClient _httpClient;
     private readonly string _baseUrl;
+    private readonly string _hostId;
+    private readonly string _hostName;
 
-    public DockerClient(HttpClient httpClient, string baseUrl)
+    public DockerClient(HttpClient httpClient, string hostId, string hostName, string baseUrl)
     {
         _httpClient = httpClient;
+        _hostId = hostId;
+        _hostName = hostName;
         _baseUrl = baseUrl.TrimEnd('/');
+    }
+
+    public string HostId => _hostId;
+    public string HostName => _hostName;
+    public string BaseUrl => _baseUrl;
+
+    /// <summary>
+    /// Check if Docker API is reachable.
+    /// </summary>
+    public async Task<bool> CheckHealthAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(5));
+            var response = await _httpClient.GetAsync($"{_baseUrl}/_ping", cts.Token);
+            return response.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>
     /// Get list of running containers with basic info.
     /// </summary>
-    public async Task<List<ContainerInfo>> GetContainersAsync()
+    public async Task<List<DockerContainerInfo>> GetContainersAsync()
     {
         var response = await _httpClient.GetAsync($"{_baseUrl}/containers/json");
         response.EnsureSuccessStatusCode();
@@ -28,7 +54,7 @@ public class DockerClient
         var json = await response.Content.ReadAsStringAsync();
         var containers = JsonSerializer.Deserialize<JsonElement[]>(json) ?? [];
 
-        var result = new List<ContainerInfo>();
+        var result = new List<DockerContainerInfo>();
         foreach (var container in containers)
         {
             var id = container.GetProperty("Id").GetString() ?? "";
@@ -37,7 +63,7 @@ public class DockerClient
             var state = container.GetProperty("State").GetString() ?? "";
             var created = container.GetProperty("Created").GetInt64();
 
-            result.Add(new ContainerInfo(id, names, state, created));
+            result.Add(new DockerContainerInfo(id, names, state, created));
         }
 
         return result;
@@ -59,7 +85,7 @@ public class DockerClient
             var json = await response.Content.ReadAsStringAsync();
             var stats = JsonSerializer.Deserialize<JsonElement>(json);
 
-            return ParseContainerStats(containerId, containerName, stats);
+            return ParseContainerStats(_hostId, _hostName, containerId, containerName, stats);
         }
         catch
         {
@@ -68,6 +94,8 @@ public class DockerClient
     }
 
     private static ContainerMetricSnapshot? ParseContainerStats(
+        string hostId,
+        string hostName,
         string containerId,
         string containerName,
         JsonElement stats)
@@ -159,6 +187,8 @@ public class DockerClient
             long uptimeSeconds = 0;
 
             return new ContainerMetricSnapshot(
+                HostId: hostId,
+                HostName: hostName,
                 ContainerId: containerId,
                 ContainerName: containerName,
                 Timestamp: DateTimeOffset.UtcNow,
@@ -232,7 +262,7 @@ public class DockerClient
 /// <summary>
 /// Basic container information from Docker API.
 /// </summary>
-public record ContainerInfo(
+public record DockerContainerInfo(
     string Id,
     string Name,
     string State,

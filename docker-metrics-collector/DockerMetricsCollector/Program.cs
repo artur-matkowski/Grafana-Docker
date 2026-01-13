@@ -1,22 +1,26 @@
+using DockerMetricsCollector.Models;
 using DockerMetricsCollector.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Load configuration
-var dockerBaseUrl = builder.Configuration["DockerApi:BaseUrl"] ?? "http://localhost:2375";
+// Determine config file path
+var configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
 
-// Register services
+// Register HttpClient factory
+builder.Services.AddHttpClient();
+
+// Register singleton services
 builder.Services.AddSingleton<MetricsStore>();
-builder.Services.AddSingleton(sp => new HttpClient());
-builder.Services.AddSingleton(sp => new DockerClient(
-    sp.GetRequiredService<HttpClient>(),
-    dockerBaseUrl
+builder.Services.AddSingleton<HostHealthService>();
+builder.Services.AddSingleton<DockerClientFactory>();
+builder.Services.AddSingleton(sp => new ConfigService(
+    configPath,
+    sp.GetRequiredService<ILogger<ConfigService>>(),
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient()
 ));
-builder.Services.AddHostedService(sp => new DockerCollectorService(
-    sp.GetRequiredService<DockerClient>(),
-    sp.GetRequiredService<MetricsStore>(),
-    sp.GetRequiredService<ILogger<DockerCollectorService>>()
-));
+
+// Register background collector service
+builder.Services.AddHostedService<DockerCollectorService>();
 
 // Add CORS for Grafana panel access
 builder.Services.AddCors(options =>
@@ -34,7 +38,9 @@ var app = builder.Build();
 // Enable CORS
 app.UseCors();
 
-// Health check endpoint
+// =====================
+// Health Check
+// =====================
 app.MapGet("/", () => new
 {
     service = "Docker Metrics Collector",
@@ -42,28 +48,116 @@ app.MapGet("/", () => new
     timestamp = DateTimeOffset.UtcNow
 });
 
-// Get list of known containers
-app.MapGet("/api/containers", (MetricsStore store) =>
+// =====================
+// Configuration Endpoints
+// =====================
+
+// Get current configuration
+app.MapGet("/api/config", (ConfigService config) =>
 {
-    var containerIds = store.GetKnownContainerIds().ToList();
-    return Results.Ok(containerIds);
+    return Results.Ok(config.GetConfig());
+});
+
+// Add a new Docker host
+app.MapPost("/api/config/hosts", (ConfigService config, AddHostRequest request) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Name))
+    {
+        return Results.BadRequest(new { error = "Name is required" });
+    }
+    if (string.IsNullOrWhiteSpace(request.Url))
+    {
+        return Results.BadRequest(new { error = "URL is required" });
+    }
+
+    var host = config.AddHost(request.Name, request.Url, request.Enabled ?? true);
+    return Results.Created($"/api/config/hosts/{host.Id}", host);
+});
+
+// Update a Docker host
+app.MapPut("/api/config/hosts/{id}", (ConfigService config, string id, UpdateHostRequest request) =>
+{
+    var success = config.UpdateHost(id, request.Name, request.Url, request.Enabled);
+    if (!success)
+    {
+        return Results.NotFound(new { error = "Host not found" });
+    }
+
+    var host = config.GetHost(id);
+    return Results.Ok(host);
+});
+
+// Remove a Docker host
+app.MapDelete("/api/config/hosts/{id}", (ConfigService config, string id) =>
+{
+    var success = config.RemoveHost(id);
+    if (!success)
+    {
+        return Results.NotFound(new { error = "Host not found" });
+    }
+    return Results.NoContent();
+});
+
+// =====================
+// Host Status Endpoints
+// =====================
+
+// Get all hosts with health status
+app.MapGet("/api/hosts", (ConfigService config, HostHealthService health, MetricsStore store) =>
+{
+    var hosts = config.GetHosts();
+    var healthInfo = health.GetAllHealth();
+    var containerCounts = store.GetContainerCountByHost();
+
+    var result = hosts.Select(h =>
+    {
+        healthInfo.TryGetValue(h.Id, out var hostHealth);
+        containerCounts.TryGetValue(h.Id, out var count);
+
+        return new DockerHostStatus(
+            Id: h.Id,
+            Name: h.Name,
+            Url: h.Url,
+            Enabled: h.Enabled,
+            LastSeen: hostHealth?.LastChecked,
+            IsHealthy: hostHealth?.IsHealthy ?? false,
+            LastError: hostHealth?.LastError,
+            ContainerCount: count
+        );
+    });
+
+    return Results.Ok(result);
+});
+
+// =====================
+// Container Endpoints
+// =====================
+
+// Get list of known containers (with host info)
+app.MapGet("/api/containers", (MetricsStore store, string? hostId) =>
+{
+    var containers = store.GetKnownContainers(hostId).ToList();
+    return Results.Ok(containers);
 });
 
 // Get container metrics
 app.MapGet("/api/metrics/containers", (
     MetricsStore store,
     string? id,
+    string? hostId,
     DateTimeOffset? from,
     DateTimeOffset? to) =>
 {
-    if (string.IsNullOrEmpty(id))
-    {
-        return Results.BadRequest(new { error = "Container ID is required. Use ?id=containerId" });
-    }
-
-    var metrics = store.GetContainerMetrics(id, from, to).ToList();
+    // Allow querying by hostId only (all containers from host)
+    // or by id only (specific container across all hosts)
+    // or by both (specific container on specific host)
+    var metrics = store.GetContainerMetrics(hostId, id, from, to).ToList();
     return Results.Ok(metrics);
 });
+
+// =====================
+// Host Metrics Endpoints
+// =====================
 
 // Get host metrics
 app.MapGet("/api/metrics/hosts", (
@@ -75,26 +169,38 @@ app.MapGet("/api/metrics/hosts", (
     return Results.Ok(metrics);
 });
 
+// =====================
+// Debug Endpoints
+// =====================
+
 // Get store stats (for debugging)
-app.MapGet("/api/stats", (MetricsStore store) =>
+app.MapGet("/api/stats", (MetricsStore store, ConfigService config) =>
 {
-    var containerIds = store.GetKnownContainerIds().ToList();
-    var containerCounts = containerIds.ToDictionary(
-        id => id,
-        id => store.GetContainerMetrics(id).Count()
-    );
+    var containers = store.GetKnownContainers().ToList();
+    var containersByHost = containers
+        .GroupBy(c => c.HostName)
+        .ToDictionary(g => g.Key, g => g.Count());
     var hostCount = store.GetHostMetrics().Count();
 
     return Results.Ok(new
     {
-        containers = containerCounts,
+        hosts = config.GetHosts().Count,
+        containers = containers.Count,
+        containersByHost,
         hostMetricsCount = hostCount,
         timestamp = DateTimeOffset.UtcNow
     });
 });
 
 Console.WriteLine($"Docker Metrics Collector starting...");
-Console.WriteLine($"Docker API: {dockerBaseUrl}");
+Console.WriteLine($"Config file: {configPath}");
 Console.WriteLine($"API available at: http://localhost:5000");
 
 app.Run("http://0.0.0.0:5000");
+
+// =====================
+// Request DTOs
+// =====================
+
+public record AddHostRequest(string? Name, string? Url, bool? Enabled);
+public record UpdateHostRequest(string? Name, string? Url, bool? Enabled);
