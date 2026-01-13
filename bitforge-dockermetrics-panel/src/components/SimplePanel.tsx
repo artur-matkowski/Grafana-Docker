@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { PanelProps } from '@grafana/data';
-import { SimpleOptions, ContainerMetricSnapshot, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS } from 'types';
+import { SimpleOptions, ContainerMetricSnapshot, ContainerInfo, ContainerStatus, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 
@@ -315,6 +315,7 @@ interface ContainerControlsProps {
   isRunning: boolean;
   isPaused: boolean;
   styles: ReturnType<typeof getStyles>;
+  onStatusUpdate?: (status: ContainerStatus) => void;
 }
 
 const ContainerControls: React.FC<ContainerControlsProps> = ({
@@ -324,8 +325,29 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
   isRunning,
   isPaused,
   styles,
+  onStatusUpdate,
 }) => {
   const [loading, setLoading] = useState<ContainerAction | null>(null);
+
+  const pollForStatus = useCallback(async (expectedRunning: boolean, expectedPaused: boolean) => {
+    const maxAttempts = 20; // 10 seconds max (500ms * 20)
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        const response = await fetch(`${apiUrl}/api/containers/${hostId}/${containerId}/status`);
+        if (response.ok) {
+          const status: ContainerStatus = await response.json();
+          onStatusUpdate?.(status);
+          // Check if we've reached the expected state
+          if (status.isRunning === expectedRunning && status.isPaused === expectedPaused) {
+            return;
+          }
+        }
+      } catch {
+        // Ignore polling errors
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }, [apiUrl, hostId, containerId, onStatusUpdate]);
 
   const executeAction = async (action: ContainerAction) => {
     setLoading(action);
@@ -336,6 +358,34 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
       if (!response.ok) {
         const data = await response.json();
         console.error(`Failed to ${action} container:`, data.error);
+      } else {
+        // Determine expected state based on action
+        let expectedRunning = isRunning;
+        let expectedPaused = isPaused;
+        switch (action) {
+          case 'start':
+            expectedRunning = true;
+            expectedPaused = false;
+            break;
+          case 'stop':
+            expectedRunning = false;
+            expectedPaused = false;
+            break;
+          case 'restart':
+            expectedRunning = true;
+            expectedPaused = false;
+            break;
+          case 'pause':
+            expectedRunning = true;
+            expectedPaused = true;
+            break;
+          case 'unpause':
+            expectedRunning = true;
+            expectedPaused = false;
+            break;
+        }
+        // Poll for status update
+        pollForStatus(expectedRunning, expectedPaused);
       }
     } catch (err) {
       console.error(`Failed to ${action} container:`, err);
@@ -419,6 +469,18 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
+  // Track real-time status overrides (from control actions)
+  const [statusOverrides, setStatusOverrides] = useState<Map<string, ContainerStatus>>(new Map());
+
+  // Callback to handle real-time status updates from control actions
+  const handleStatusUpdate = useCallback((status: ContainerStatus) => {
+    setStatusOverrides(prev => {
+      const next = new Map(prev);
+      next.set(status.containerId, status);
+      return next;
+    });
+  }, []);
+
   const selectedMetricDefs = useMemo(() => {
     const selected = options.selectedMetrics || DEFAULT_METRICS;
     return AVAILABLE_METRICS.filter((m) => selected.includes(m.key));
@@ -486,6 +548,8 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
         const results = await Promise.all(metricsPromises);
         const combined = results.flat();
         setAllMetrics(combined);
+        // Clear status overrides when fresh metrics arrive - they should now reflect the real state
+        setStatusOverrides(new Map());
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch metrics');
         setAllMetrics([]);
@@ -496,6 +560,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
 
     fetchMetrics();
     const interval = setInterval(fetchMetrics, 10000);
+
     return () => clearInterval(interval);
   }, [options.apiUrl, targetContainerIds, options.showAllContainers, timeRange.from.valueOf(), timeRange.to.valueOf()]);
 
@@ -710,7 +775,13 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           </div>
 
           <div className={styles.containersGrid} style={containerGridStyle}>
-            {host.containers.map((container) => (
+            {host.containers.map((container) => {
+              // Check for real-time status override first
+              const statusOverride = statusOverrides.get(container.containerId);
+              const isRunning = statusOverride?.isRunning ?? container.latest?.isRunning ?? false;
+              const isPaused = statusOverride?.isPaused ?? container.latest?.isPaused ?? false;
+
+              return (
               <div key={container.containerId} className={styles.containerCard}>
                 <div className={styles.containerHeader}>
                   <span className={styles.containerName} title={container.containerName}>
@@ -719,16 +790,16 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                   <span
                     className={styles.containerStatus}
                     style={{
-                      color: container.latest?.isPaused
+                      color: isPaused
                         ? '#FF9830'
-                        : container.latest?.isRunning
+                        : isRunning
                           ? '#73BF69'
                           : '#FF5555',
                     }}
                   >
-                    {container.latest?.isPaused
+                    {isPaused
                       ? '● Paused'
-                      : container.latest?.isRunning
+                      : isRunning
                         ? '● Running'
                         : '● Stopped'}
                   </span>
@@ -743,13 +814,15 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                     apiUrl={options.apiUrl}
                     hostId={container.hostId}
                     containerId={container.containerId}
-                    isRunning={container.latest?.isRunning ?? false}
-                    isPaused={container.latest?.isPaused ?? false}
+                    isRunning={isRunning}
+                    isPaused={isPaused}
                     styles={styles}
+                    onStatusUpdate={handleStatusUpdate}
                   />
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       ))}

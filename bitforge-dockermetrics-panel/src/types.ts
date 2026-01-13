@@ -206,6 +206,15 @@ export interface ContainerMetricSnapshot {
   ioPressureFull: number | null;
 }
 
+// Real-time container status from collector
+export interface ContainerStatus {
+  containerId: string;
+  containerName: string;
+  status: string;
+  isRunning: boolean;
+  isPaused: boolean;
+}
+
 export interface HostMetricSnapshot {
   hostname: string;
   timestamp: string;
