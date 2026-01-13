@@ -1,0 +1,67 @@
+# =====================
+# .NET / C#
+# =====================
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+*.csproj.user
+
+# NuGet
+*.nupkg
+**/packages/*
+!**/packages/build/
+
+# =====================
+# Node.js / TypeScript
+# =====================
+node_modules/
+dist/
+.npm
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =====================
+# Grafana Plugin
+# =====================
+# Keep src/, but ignore build output
+**/coverage/
+
+# =====================
+# IDE / Editors
+# =====================
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# =====================
+# OS Files
+# =====================
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# =====================
+# Claude Code
+# =====================
+.claude/
+
+# =====================
+# Misc
+# =====================
+*.tmp
+*.temp
+*.bak
+*.orig

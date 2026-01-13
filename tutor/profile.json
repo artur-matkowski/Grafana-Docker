@@ -1,0 +1,38 @@
+{
+  "languages": {
+    "cpp": "strong",
+    "csharp": "strong",
+    "sql_postgres": "intermediate",
+    "javascript": "none",
+    "typescript": "none",
+    "react": "none"
+  },
+  "backend_and_systems": {
+    "rest_apis": "strong",
+    "network_programming": "strong",
+    "docker_usage": "strong_user",
+    "docker_api": "beginner",
+    "metrics_collection_patterns": "intermediate"
+  },
+  "grafana": {
+    "usage": "intermediate_user",
+    "plugin_development": "beginner"
+  },
+  "tooling": {
+    "cli": "comfortable",
+    "git": "comfortable",
+    "editor": "vs_code",
+    "node_npm": "comfortable"
+  },
+  "environment": {
+    "os": ["debian", "wsl_ubuntu"],
+    "grafana_version": "12.3",
+    "postgres": "docker_container_on_local_network"
+  },
+  "goals": {
+    "primary": "Be able to truthfully state on CV that you can build Grafana plugins (panel + data source style)",
+    "secondary": "Have a working Docker + host metrics visualization backed by Postgres, using a C# collector"
+  },
+  "architecture_choice": "Option A - C# collector service + Grafana panel plugin",
+  "notes": "Add container and host uptime and up/down status, and host CPU frequency as part of the metrics set."
+}
