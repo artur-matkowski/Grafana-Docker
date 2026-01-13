@@ -19,6 +19,7 @@ public record ContainerMetricSnapshot(
     long DiskWriteBytes,
     long UptimeSeconds,
     bool IsRunning,
+    bool IsPaused,
     double? CpuPressureSome,
     double? CpuPressureFull,
     double? MemoryPressureSome,
