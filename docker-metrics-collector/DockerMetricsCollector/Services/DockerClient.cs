@@ -72,7 +72,7 @@ public class DockerClient
     /// <summary>
     /// Get stats for a specific container and convert to a metric snapshot.
     /// </summary>
-    public async Task<ContainerMetricSnapshot?> GetContainerStatsAsync(string containerId, string containerName)
+    public async Task<ContainerMetricSnapshot?> GetContainerStatsAsync(string containerId, string containerName, string state)
     {
         try
         {
@@ -85,7 +85,7 @@ public class DockerClient
             var json = await response.Content.ReadAsStringAsync();
             var stats = JsonSerializer.Deserialize<JsonElement>(json);
 
-            return ParseContainerStats(_hostId, _hostName, containerId, containerName, stats);
+            return ParseContainerStats(_hostId, _hostName, containerId, containerName, state, stats);
         }
         catch
         {
@@ -208,6 +208,7 @@ public class DockerClient
         string hostName,
         string containerId,
         string containerName,
+        string state,
         JsonElement stats)
     {
         try
@@ -296,6 +297,9 @@ public class DockerClient
             // Note: For accurate uptime, we'd need to call /containers/{id}/json
             long uptimeSeconds = 0;
 
+            var isRunning = state.Equals("running", StringComparison.OrdinalIgnoreCase);
+            var isPaused = state.Equals("paused", StringComparison.OrdinalIgnoreCase);
+
             return new ContainerMetricSnapshot(
                 HostId: hostId,
                 HostName: hostName,
@@ -310,7 +314,8 @@ public class DockerClient
                 DiskReadBytes: diskRead,
                 DiskWriteBytes: diskWrite,
                 UptimeSeconds: uptimeSeconds,
-                IsRunning: true,
+                IsRunning: isRunning || isPaused, // Paused containers are technically still running
+                IsPaused: isPaused,
                 CpuPressureSome: cpuPressureSome,
                 CpuPressureFull: cpuPressureFull,
                 MemoryPressureSome: memPressureSome,

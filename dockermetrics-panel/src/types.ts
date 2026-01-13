@@ -197,6 +197,7 @@ export interface ContainerMetricSnapshot {
   diskWriteBytes: number;
   uptimeSeconds: number;
   isRunning: boolean;
+  isPaused: boolean;
   cpuPressureSome: number | null;
   cpuPressureFull: number | null;
   memoryPressureSome: number | null;

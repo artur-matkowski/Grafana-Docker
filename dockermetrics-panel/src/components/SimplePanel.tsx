@@ -313,6 +313,7 @@ interface ContainerControlsProps {
   hostId: string;
   containerId: string;
   isRunning: boolean;
+  isPaused: boolean;
   styles: ReturnType<typeof getStyles>;
 }
 
@@ -321,6 +322,7 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
   hostId,
   containerId,
   isRunning,
+  isPaused,
   styles,
 }) => {
   const [loading, setLoading] = useState<ContainerAction | null>(null);
@@ -371,14 +373,25 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
       >
         {loading === 'restart' ? '...' : '↻ Restart'}
       </button>
-      <button
-        className={`${styles.controlButton} ${styles.controlButtonPause}`}
-        onClick={() => executeAction('pause')}
-        disabled={loading !== null || !isRunning}
-        title="Pause container"
-      >
-        {loading === 'pause' ? '...' : '⏸ Pause'}
-      </button>
+      {isPaused ? (
+        <button
+          className={`${styles.controlButton} ${styles.controlButtonStart}`}
+          onClick={() => executeAction('unpause')}
+          disabled={loading !== null}
+          title="Unpause container"
+        >
+          {loading === 'unpause' ? '...' : '▶ Unpause'}
+        </button>
+      ) : (
+        <button
+          className={`${styles.controlButton} ${styles.controlButtonPause}`}
+          onClick={() => executeAction('pause')}
+          disabled={loading !== null || !isRunning}
+          title="Pause container"
+        >
+          {loading === 'pause' ? '...' : '⏸ Pause'}
+        </button>
+      )}
     </div>
   );
 };
@@ -705,9 +718,19 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                   </span>
                   <span
                     className={styles.containerStatus}
-                    style={{ color: container.latest?.isRunning ? '#73BF69' : '#FF5555' }}
+                    style={{
+                      color: container.latest?.isPaused
+                        ? '#FF9830'
+                        : container.latest?.isRunning
+                          ? '#73BF69'
+                          : '#FF5555',
+                    }}
                   >
-                    {container.latest?.isRunning ? '● Running' : '● Stopped'}
+                    {container.latest?.isPaused
+                      ? '● Paused'
+                      : container.latest?.isRunning
+                        ? '● Running'
+                        : '● Stopped'}
                   </span>
                 </div>
 
@@ -721,6 +744,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                     hostId={container.hostId}
                     containerId={container.containerId}
                     isRunning={container.latest?.isRunning ?? false}
+                    isPaused={container.latest?.isPaused ?? false}
                     styles={styles}
                   />
                 )}

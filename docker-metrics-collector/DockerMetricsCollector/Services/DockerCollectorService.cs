@@ -105,7 +105,7 @@ public class DockerCollectorService : BackgroundService
             {
                 if (stoppingToken.IsCancellationRequested) break;
 
-                var snapshot = await client.GetContainerStatsAsync(container.Id, container.Name);
+                var snapshot = await client.GetContainerStatsAsync(container.Id, container.Name, container.State);
                 if (snapshot != null)
                 {
                     _metricsStore.AddContainerSnapshot(snapshot);
