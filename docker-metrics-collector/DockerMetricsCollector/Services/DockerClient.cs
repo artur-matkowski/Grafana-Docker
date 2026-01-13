@@ -76,6 +76,38 @@ public class DockerClient
     {
         try
         {
+            var isPaused = state.Equals("paused", StringComparison.OrdinalIgnoreCase);
+            var isRunning = state.Equals("running", StringComparison.OrdinalIgnoreCase);
+
+            // For paused containers, stats endpoint may not return data or may hang
+            // Create a minimal snapshot with state info only
+            if (isPaused)
+            {
+                return new ContainerMetricSnapshot(
+                    HostId: _hostId,
+                    HostName: _hostName,
+                    ContainerId: containerId,
+                    ContainerName: containerName,
+                    Timestamp: DateTimeOffset.UtcNow,
+                    CpuPercent: 0,
+                    MemoryBytes: 0,
+                    MemoryPercent: 0,
+                    NetworkRxBytes: 0,
+                    NetworkTxBytes: 0,
+                    DiskReadBytes: 0,
+                    DiskWriteBytes: 0,
+                    UptimeSeconds: 0,
+                    IsRunning: true, // Paused containers are technically still running
+                    IsPaused: true,
+                    CpuPressureSome: null,
+                    CpuPressureFull: null,
+                    MemoryPressureSome: null,
+                    MemoryPressureFull: null,
+                    IoPressureSome: null,
+                    IoPressureFull: null
+                );
+            }
+
             var response = await _httpClient.GetAsync(
                 $"{_baseUrl}/containers/{containerId}/stats?stream=false");
 
@@ -83,9 +115,48 @@ public class DockerClient
                 return null;
 
             var json = await response.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(json))
+                return null;
+
             var stats = JsonSerializer.Deserialize<JsonElement>(json);
 
             return ParseContainerStats(_hostId, _hostName, containerId, containerName, state, stats);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Get real-time container status directly from Docker.
+    /// </summary>
+    public async Task<ContainerStatus?> GetContainerStatusAsync(string containerId)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"{_baseUrl}/containers/{containerId}/json");
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            var json = await response.Content.ReadAsStringAsync();
+            var container = JsonSerializer.Deserialize<JsonElement>(json);
+
+            var state = container.GetProperty("State");
+            var status = state.GetProperty("Status").GetString() ?? "unknown";
+            var running = state.GetProperty("Running").GetBoolean();
+            var paused = state.GetProperty("Paused").GetBoolean();
+
+            // Get container name
+            var name = container.GetProperty("Name").GetString() ?? "";
+
+            return new ContainerStatus(
+                ContainerId: containerId,
+                ContainerName: name,
+                Status: status,
+                IsRunning: running,
+                IsPaused: paused
+            );
         }
         catch
         {
@@ -382,4 +453,15 @@ public record DockerContainerInfo(
     string Name,
     string State,
     long Created
+);
+
+/// <summary>
+/// Real-time container status from Docker API.
+/// </summary>
+public record ContainerStatus(
+    string ContainerId,
+    string ContainerName,
+    string Status,
+    bool IsRunning,
+    bool IsPaused
 );

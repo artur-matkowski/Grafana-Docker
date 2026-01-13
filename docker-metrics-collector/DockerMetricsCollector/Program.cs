@@ -289,6 +289,34 @@ app.MapPost("/api/containers/{hostId}/{containerId}/unpause", async (
 });
 
 // =====================
+// Real-time Status Endpoint
+// =====================
+
+// Get real-time container status directly from Docker (bypasses metrics cache)
+app.MapGet("/api/containers/{hostId}/{containerId}/status", async (
+    ConfigService config,
+    DockerClientFactory clientFactory,
+    string hostId,
+    string containerId) =>
+{
+    var host = config.GetHost(hostId);
+    if (host == null)
+    {
+        return Results.NotFound(new { error = "Host not found" });
+    }
+
+    var client = clientFactory.CreateClient(host);
+    var status = await client.GetContainerStatusAsync(containerId);
+
+    if (status == null)
+    {
+        return Results.NotFound(new { error = "Container not found or unreachable" });
+    }
+
+    return Results.Ok(status);
+});
+
+// =====================
 // Debug Endpoints
 // =====================
 
