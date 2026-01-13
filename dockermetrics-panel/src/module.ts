@@ -45,5 +45,29 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       category: ['Display'],
       editor: MetricSelectorEditor,
       defaultValue: DEFAULT_METRICS,
+    })
+    .addNumberInput({
+      path: 'containersPerRow',
+      name: 'Containers per row',
+      description: 'Number of container cards per row (0 = auto)',
+      defaultValue: 0,
+      category: ['Layout'],
+      settings: {
+        min: 0,
+        max: 10,
+        integer: true,
+      },
+    })
+    .addNumberInput({
+      path: 'metricsPerRow',
+      name: 'Metrics per row',
+      description: 'Number of metrics per row within each container card (0 = auto)',
+      defaultValue: 0,
+      category: ['Layout'],
+      settings: {
+        min: 0,
+        max: 8,
+        integer: true,
+      },
     });
 });
