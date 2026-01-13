@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { PanelProps } from '@grafana/data';
-import { SimpleOptions, ContainerMetricSnapshot, ContainerInfo } from 'types';
+import { SimpleOptions, ContainerMetricSnapshot, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 
@@ -56,7 +56,7 @@ const getStyles = () => {
     `,
     containersGrid: css`
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
       gap: 12px;
       padding: 0 4px;
     `,
@@ -85,32 +85,61 @@ const getStyles = () => {
       font-size: 11px;
       margin-left: 8px;
     `,
-    metricsRow: css`
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
+    metricsGrid: css`
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 10px;
     `,
     metric: css`
-      flex: 1;
-      min-width: 70px;
+      background: rgba(0, 0, 0, 0.15);
+      border-radius: 4px;
+      padding: 8px;
+    `,
+    metricHeader: css`
+      display: flex;
+      align-items: center;
+      margin-bottom: 4px;
+    `,
+    metricColorDot: css`
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      margin-right: 6px;
     `,
     metricLabel: css`
       font-size: 10px;
       color: #888;
-      margin-bottom: 2px;
     `,
     metricValue: css`
-      font-size: 16px;
+      font-size: 18px;
       font-weight: 600;
+      margin-bottom: 4px;
     `,
     metricUnit: css`
       font-size: 10px;
       color: #888;
       margin-left: 2px;
     `,
-    sparkline: css`
-      margin-top: 8px;
-      height: 24px;
+    sparklineContainer: css`
+      position: relative;
+      height: 40px;
+      margin-top: 4px;
+    `,
+    sparklineSvg: css`
+      display: block;
+    `,
+    scaleLabels: css`
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      font-size: 8px;
+      color: #666;
+      text-align: right;
+      pointer-events: none;
     `,
     emptyState: css`
       color: #888;
@@ -129,32 +158,79 @@ const getStyles = () => {
   };
 };
 
-const Sparkline: React.FC<{ data: number[]; color: string; height?: number }> = ({
-  data,
-  color,
-  height = 24,
-}) => {
+interface SparklineProps {
+  data: number[];
+  color: string;
+  height?: number;
+  formatValue: (v: number) => string;
+}
+
+const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatValue }) => {
   if (data.length < 2) {
     return null;
   }
 
   const width = 100;
+  const padding = 2;
+  const chartHeight = height - padding * 2;
+  const chartWidth = width - 28; // Leave space for scale labels
+
   const min = Math.min(...data);
   const max = Math.max(...data);
   const range = max - min || 1;
 
   const points = data
     .map((value, index) => {
-      const x = (index / (data.length - 1)) * width;
-      const y = height - ((value - min) / range) * height;
+      const x = (index / (data.length - 1)) * chartWidth;
+      const y = padding + chartHeight - ((value - min) / range) * chartHeight;
       return `${x},${y}`;
     })
     .join(' ');
 
+  // Calculate nice scale values
+  const scaleMax = formatValue(max);
+  const scaleMin = formatValue(min);
+
   return (
-    <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-      <polyline fill="none" stroke={color} strokeWidth="1.5" points={points} />
-    </svg>
+    <div style={{ position: 'relative', height }}>
+      <svg
+        width="100%"
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        style={{ display: 'block' }}
+      >
+        {/* Grid lines */}
+        <line x1="0" y1={padding} x2={chartWidth} y2={padding} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+        <line
+          x1="0"
+          y1={padding + chartHeight / 2}
+          x2={chartWidth}
+          y2={padding + chartHeight / 2}
+          stroke="rgba(255,255,255,0.05)"
+          strokeWidth="0.5"
+        />
+        <line
+          x1="0"
+          y1={padding + chartHeight}
+          x2={chartWidth}
+          y2={padding + chartHeight}
+          stroke="rgba(255,255,255,0.1)"
+          strokeWidth="0.5"
+        />
+
+        {/* Data line */}
+        <polyline fill="none" stroke={color} strokeWidth="1.5" points={points} />
+
+        {/* Scale labels */}
+        <text x={width - 2} y={padding + 3} fontSize="7" fill="#666" textAnchor="end">
+          {scaleMax}
+        </text>
+        <text x={width - 2} y={height - padding} fontSize="7" fill="#666" textAnchor="end">
+          {scaleMin}
+        </text>
+      </svg>
+    </div>
   );
 };
 
@@ -175,6 +251,12 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
+  // Get selected metric definitions
+  const selectedMetricDefs = useMemo(() => {
+    const selected = options.selectedMetrics || DEFAULT_METRICS;
+    return AVAILABLE_METRICS.filter((m) => selected.includes(m.key));
+  }, [options.selectedMetrics]);
+
   // Fetch containers list
   useEffect(() => {
     const fetchContainers = async () => {
@@ -186,7 +268,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           setContainers(data);
         }
       } catch {
-        // Ignore errors, we'll use container info from metrics
+        // Ignore errors
       }
     };
 
@@ -230,7 +312,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
         const from = timeRange.from.toISOString();
         const to = timeRange.to.toISOString();
 
-        // Fetch metrics for all containers
         const metricsPromises = targetContainerIds.map(async (containerId) => {
           const url = `${options.apiUrl}/api/metrics/containers?id=${containerId}&from=${from}&to=${to}`;
           const response = await fetch(url);
@@ -258,7 +339,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   const containersByHost = useMemo(() => {
     const byContainer = new Map<string, ContainerWithMetrics>();
 
-    // Initialize from containers list
     for (const c of containers) {
       if (options.showAllContainers || (options.containerIds || []).includes(c.containerId)) {
         byContainer.set(c.containerId, {
@@ -272,7 +352,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
       }
     }
 
-    // Add metrics data
     for (const m of allMetrics) {
       let container = byContainer.get(m.containerId);
       if (!container) {
@@ -289,7 +368,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
       container.metrics.push(m);
     }
 
-    // Set latest metric for each container
     for (const container of byContainer.values()) {
       if (container.metrics.length > 0) {
         container.metrics.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
@@ -297,7 +375,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
       }
     }
 
-    // Group by host
     const byHost = new Map<string, { hostId: string; hostName: string; containers: ContainerWithMetrics[] }>();
     for (const container of byContainer.values()) {
       const hostKey = container.hostId;
@@ -311,7 +388,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
       byHost.get(hostKey)!.containers.push(container);
     }
 
-    // Sort containers by name within each host
     for (const host of byHost.values()) {
       host.containers.sort((a, b) => a.containerName.localeCompare(b.containerName));
     }
@@ -322,7 +398,36 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   const totalContainers = containersByHost.reduce((sum, h) => sum + h.containers.length, 0);
   const totalHosts = containersByHost.length;
 
-  // Render error state
+  // Render metric for a container
+  const renderMetric = (container: ContainerWithMetrics, metricDef: MetricDefinition) => {
+    const latest = container.latest;
+    const rawValue = latest ? metricDef.getValue(latest) : null;
+
+    if (rawValue === null || rawValue === undefined) {
+      return null; // Skip metrics with null values (e.g., pressure metrics not available)
+    }
+
+    const data = container.metrics
+      .map((m) => metricDef.getValue(m))
+      .filter((v): v is number => v !== null && v !== undefined);
+
+    return (
+      <div key={metricDef.key} className={styles.metric}>
+        <div className={styles.metricHeader}>
+          <span className={styles.metricColorDot} style={{ background: metricDef.color }} />
+          <span className={styles.metricLabel}>{metricDef.label}</span>
+        </div>
+        <div className={styles.metricValue}>
+          {metricDef.format(rawValue)}
+          <span className={styles.metricUnit}>{metricDef.unit}</span>
+        </div>
+        {data.length > 1 && (
+          <Sparkline data={data} color={metricDef.color} formatValue={metricDef.format} />
+        )}
+      </div>
+    );
+  };
+
   if (error) {
     return (
       <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
@@ -341,7 +446,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     );
   }
 
-  // Render loading state
   if (loading && allMetrics.length === 0 && targetContainerIds.length > 0) {
     return (
       <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
@@ -350,7 +454,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     );
   }
 
-  // Render empty state
   if (totalContainers === 0) {
     return (
       <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
@@ -367,21 +470,37 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     );
   }
 
+  if (selectedMetricDefs.length === 0) {
+    return (
+      <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
+        <div className={styles.emptyState}>
+          No metrics selected.
+          <br />
+          <span style={{ fontSize: '11px' }}>
+            Select metrics to display in panel options under "Display".
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
       <div className={styles.summary}>
-        <span>{totalHosts} host{totalHosts !== 1 ? 's' : ''}</span>
-        <span>{totalContainers} container{totalContainers !== 1 ? 's' : ''}</span>
+        <span>
+          {totalHosts} host{totalHosts !== 1 ? 's' : ''}
+        </span>
+        <span>
+          {totalContainers} container{totalContainers !== 1 ? 's' : ''}
+        </span>
+        <span>{selectedMetricDefs.length} metrics</span>
         <span>{allMetrics.length} samples</span>
       </div>
 
       {containersByHost.map((host) => (
         <div key={host.hostId} className={styles.hostSection}>
           <div className={styles.hostHeader}>
-            <span
-              className={styles.hostHealthDot}
-              style={{ background: '#73BF69' }}
-            />
+            <span className={styles.hostHealthDot} style={{ background: '#73BF69' }} />
             {host.hostName}
             <span className={styles.containerCount}>
               {host.containers.length} container{host.containers.length !== 1 ? 's' : ''}
@@ -389,78 +508,25 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           </div>
 
           <div className={styles.containersGrid}>
-            {host.containers.map((container) => {
-              const latest = container.latest;
-              const memoryData = container.metrics.map((m) => m.memoryBytes / (1024 * 1024));
-              const cpuData = container.metrics.map((m) => m.cpuPercent);
-
-              return (
-                <div key={container.containerId} className={styles.containerCard}>
-                  <div className={styles.containerHeader}>
-                    <span className={styles.containerName} title={container.containerName}>
-                      {container.containerName.replace(/^\//, '')}
-                    </span>
-                    <span
-                      className={styles.containerStatus}
-                      style={{ color: latest?.isRunning ? '#73BF69' : '#FF5555' }}
-                    >
-                      {latest?.isRunning ? '● Running' : '● Stopped'}
-                    </span>
-                  </div>
-
-                  <div className={styles.metricsRow}>
-                    {options.showCpu && (
-                      <div className={styles.metric}>
-                        <div className={styles.metricLabel}>CPU</div>
-                        <div className={styles.metricValue}>
-                          {latest ? latest.cpuPercent.toFixed(1) : '-'}
-                          <span className={styles.metricUnit}>%</span>
-                        </div>
-                        {cpuData.length > 1 && (
-                          <div className={styles.sparkline}>
-                            <Sparkline data={cpuData} color="#5794F2" />
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {options.showMemory && (
-                      <div className={styles.metric}>
-                        <div className={styles.metricLabel}>Memory</div>
-                        <div className={styles.metricValue}>
-                          {latest ? (latest.memoryBytes / (1024 * 1024)).toFixed(0) : '-'}
-                          <span className={styles.metricUnit}>MB</span>
-                        </div>
-                        {memoryData.length > 1 && (
-                          <div className={styles.sparkline}>
-                            <Sparkline data={memoryData} color="#73BF69" />
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {options.showNetwork && latest && (
-                      <>
-                        <div className={styles.metric}>
-                          <div className={styles.metricLabel}>Net RX</div>
-                          <div className={styles.metricValue}>
-                            {(latest.networkRxBytes / 1024).toFixed(0)}
-                            <span className={styles.metricUnit}>KB</span>
-                          </div>
-                        </div>
-                        <div className={styles.metric}>
-                          <div className={styles.metricLabel}>Net TX</div>
-                          <div className={styles.metricValue}>
-                            {(latest.networkTxBytes / 1024).toFixed(0)}
-                            <span className={styles.metricUnit}>KB</span>
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
+            {host.containers.map((container) => (
+              <div key={container.containerId} className={styles.containerCard}>
+                <div className={styles.containerHeader}>
+                  <span className={styles.containerName} title={container.containerName}>
+                    {container.containerName.replace(/^\//, '')}
+                  </span>
+                  <span
+                    className={styles.containerStatus}
+                    style={{ color: container.latest?.isRunning ? '#73BF69' : '#FF5555' }}
+                  >
+                    {container.latest?.isRunning ? '● Running' : '● Stopped'}
+                  </span>
                 </div>
-              );
-            })}
+
+                <div className={styles.metricsGrid}>
+                  {selectedMetricDefs.map((metricDef) => renderMetric(container, metricDef))}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       ))}

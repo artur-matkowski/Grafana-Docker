@@ -1,8 +1,9 @@
 import { PanelPlugin } from '@grafana/data';
-import { SimpleOptions } from './types';
+import { SimpleOptions, DEFAULT_METRICS } from './types';
 import { SimplePanel } from './components/SimplePanel';
 import { HostManagerEditor } from './components/HostManagerEditor';
 import { ContainerSelectorEditor } from './components/ContainerSelectorEditor';
+import { MetricSelectorEditor } from './components/MetricSelectorEditor';
 
 export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOptions((builder) => {
   return builder
@@ -36,25 +37,13 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       category: ['Containers'],
       editor: ContainerSelectorEditor,
     })
-    .addBooleanSwitch({
-      path: 'showMemory',
-      name: 'Show Memory',
-      description: 'Display memory usage metrics',
-      defaultValue: true,
+    .addCustomEditor({
+      id: 'metricSelector',
+      path: 'selectedMetrics',
+      name: 'Display Metrics',
+      description: 'Choose which metrics to show for each container',
       category: ['Display'],
-    })
-    .addBooleanSwitch({
-      path: 'showCpu',
-      name: 'Show CPU',
-      description: 'Display CPU usage metrics',
-      defaultValue: true,
-      category: ['Display'],
-    })
-    .addBooleanSwitch({
-      path: 'showNetwork',
-      name: 'Show Network',
-      description: 'Display network I/O metrics',
-      defaultValue: false,
-      category: ['Display'],
+      editor: MetricSelectorEditor,
+      defaultValue: DEFAULT_METRICS,
     });
 });
