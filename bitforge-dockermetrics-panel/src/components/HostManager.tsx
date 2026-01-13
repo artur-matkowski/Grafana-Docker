@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { css } from '@emotion/css';
-import { DockerHostStatus } from '../types';
+import { HostConfig, HostStatus, AgentInfo } from '../types';
 
 interface HostManagerProps {
-  apiUrl: string;
-  onHostsChanged?: () => void;
+  hosts: HostConfig[];
+  onHostsChange: (hosts: HostConfig[]) => void;
 }
 
 const styles = {
@@ -27,6 +27,7 @@ const styles = {
     height: 8px;
     border-radius: 50%;
     margin-right: 8px;
+    flex-shrink: 0;
   `,
   healthy: css`
     background-color: #73BF69;
@@ -56,6 +57,16 @@ const styles = {
     font-size: 11px;
     color: #888;
     margin-left: 8px;
+    text-align: right;
+    min-width: 80px;
+  `,
+  hostVersion: css`
+    font-size: 10px;
+    color: #666;
+  `,
+  enabledToggle: css`
+    margin-left: 8px;
+    cursor: pointer;
   `,
   removeButton: css`
     background: none;
@@ -139,11 +150,6 @@ const styles = {
     font-size: 12px;
     padding: 4px 0;
   `,
-  loading: css`
-    color: #888;
-    font-size: 12px;
-    padding: 8px 0;
-  `,
   emptyState: css`
     color: #888;
     font-size: 12px;
@@ -152,133 +158,179 @@ const styles = {
   `,
 };
 
-export const HostManager: React.FC<HostManagerProps> = ({ apiUrl, onHostsChanged }) => {
-  const [hosts, setHosts] = useState<DockerHostStatus[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+// Generate a simple UUID
+function generateId(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+export const HostManager: React.FC<HostManagerProps> = ({ hosts, onHostsChange }) => {
+  const [hostStatuses, setHostStatuses] = useState<Map<string, HostStatus>>(new Map());
   const [showAddForm, setShowAddForm] = useState(false);
   const [newHostName, setNewHostName] = useState('');
   const [newHostUrl, setNewHostUrl] = useState('');
-  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const fetchHosts = useCallback(async () => {
-    if (!apiUrl) return;
+  // Check health of all hosts periodically
+  const checkHostsHealth = useCallback(async () => {
+    const newStatuses = new Map<string, HostStatus>();
 
-    setLoading(true);
-    setError(null);
+    await Promise.all(
+      hosts.map(async (host) => {
+        const status: HostStatus = {
+          ...host,
+          isHealthy: false,
+          lastError: null,
+          hostname: null,
+          agentVersion: null,
+          dockerVersion: null,
+          psiSupported: false,
+          containerCount: 0,
+        };
 
-    try {
-      const response = await fetch(`${apiUrl}/api/hosts`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch hosts: ${response.status}`);
-      }
-      const data: DockerHostStatus[] = await response.json();
-      setHosts(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch hosts');
-    } finally {
-      setLoading(false);
-    }
-  }, [apiUrl]);
+        try {
+          const response = await fetch(`${host.url}/api/info`, {
+            signal: AbortSignal.timeout(5000)
+          });
+
+          if (response.ok) {
+            const info: AgentInfo = await response.json();
+            status.isHealthy = info.dockerConnected;
+            status.hostname = info.hostname;
+            status.agentVersion = info.agentVersion;
+            status.dockerVersion = info.dockerVersion;
+            status.psiSupported = info.psiSupported;
+
+            // Get container count
+            const containersResponse = await fetch(`${host.url}/api/containers`, {
+              signal: AbortSignal.timeout(5000)
+            });
+            if (containersResponse.ok) {
+              const containers = await containersResponse.json();
+              status.containerCount = containers.length;
+            }
+          } else {
+            status.lastError = `HTTP ${response.status}`;
+          }
+        } catch (err) {
+          status.lastError = err instanceof Error ? err.message : 'Connection failed';
+        }
+
+        newStatuses.set(host.id, status);
+      })
+    );
+
+    setHostStatuses(newStatuses);
+  }, [hosts]);
 
   useEffect(() => {
-    fetchHosts();
-    const interval = setInterval(fetchHosts, 10000);
+    checkHostsHealth();
+    const interval = setInterval(checkHostsHealth, 15000);
     return () => clearInterval(interval);
-  }, [fetchHosts]);
+  }, [checkHostsHealth]);
 
-  const addHost = async () => {
+  const addHost = () => {
     if (!newHostName.trim() || !newHostUrl.trim()) return;
 
-    setAdding(true);
+    // Normalize URL (remove trailing slash)
+    let url = newHostUrl.trim();
+    if (url.endsWith('/')) {
+      url = url.slice(0, -1);
+    }
+
+    // Check for duplicate URLs
+    if (hosts.some((h) => h.url.toLowerCase() === url.toLowerCase())) {
+      setError('A host with this URL already exists');
+      return;
+    }
+
+    const newHost: HostConfig = {
+      id: generateId(),
+      name: newHostName.trim(),
+      url,
+      enabled: true,
+    };
+
+    onHostsChange([...hosts, newHost]);
+    setNewHostName('');
+    setNewHostUrl('');
+    setShowAddForm(false);
     setError(null);
-
-    try {
-      const response = await fetch(`${apiUrl}/api/config/hosts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: newHostName.trim(),
-          url: newHostUrl.trim(),
-          enabled: true,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `Failed to add host: ${response.status}`);
-      }
-
-      setNewHostName('');
-      setNewHostUrl('');
-      setShowAddForm(false);
-      await fetchHosts();
-      onHostsChanged?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add host');
-    } finally {
-      setAdding(false);
-    }
   };
 
-  const removeHost = async (hostId: string) => {
-    try {
-      const response = await fetch(`${apiUrl}/api/config/hosts/${hostId}`, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok && response.status !== 204) {
-        throw new Error(`Failed to remove host: ${response.status}`);
-      }
-
-      await fetchHosts();
-      onHostsChanged?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to remove host');
-    }
+  const removeHost = (hostId: string) => {
+    onHostsChange(hosts.filter((h) => h.id !== hostId));
   };
 
-  const getHealthClass = (host: DockerHostStatus) => {
-    if (!host.lastSeen) return styles.unknown;
-    return host.isHealthy ? styles.healthy : styles.unhealthy;
+  const toggleHost = (hostId: string) => {
+    onHostsChange(
+      hosts.map((h) => (h.id === hostId ? { ...h, enabled: !h.enabled } : h))
+    );
   };
 
-  if (!apiUrl) {
-    return <div className={styles.emptyState}>Configure API URL first</div>;
-  }
+  const getHealthClass = (hostId: string) => {
+    const status = hostStatuses.get(hostId);
+    if (!status) return styles.unknown;
+    return status.isHealthy ? styles.healthy : styles.unhealthy;
+  };
+
+  const getStatusInfo = (hostId: string) => {
+    const status = hostStatuses.get(hostId);
+    if (!status) return { containers: '-', version: 'Checking...' };
+    if (status.lastError) return { containers: '-', version: status.lastError };
+    return {
+      containers: `${status.containerCount} containers`,
+      version: status.agentVersion ? `v${status.agentVersion}` : '',
+    };
+  };
 
   return (
     <div className={styles.container}>
       {error && <div className={styles.error}>{error}</div>}
 
       <div className={styles.hostList}>
-        {loading && hosts.length === 0 && (
-          <div className={styles.loading}>Loading hosts...</div>
-        )}
-
-        {!loading && hosts.length === 0 && (
-          <div className={styles.emptyState}>No Docker hosts configured</div>
-        )}
-
-        {hosts.map((host) => (
-          <div key={host.id} className={styles.hostItem}>
-            <div className={`${styles.healthIndicator} ${getHealthClass(host)}`} />
-            <div className={styles.hostInfo}>
-              <div className={styles.hostName}>{host.name}</div>
-              <div className={styles.hostUrl}>{host.url}</div>
-            </div>
-            <div className={styles.hostMeta}>
-              {host.containerCount} containers
-            </div>
-            <button
-              className={styles.removeButton}
-              onClick={() => removeHost(host.id)}
-              title="Remove host"
-            >
-              x
-            </button>
+        {hosts.length === 0 && (
+          <div className={styles.emptyState}>
+            No agents configured. Add a Docker Metrics Agent to get started.
           </div>
-        ))}
+        )}
+
+        {hosts.map((host) => {
+          const statusInfo = getStatusInfo(host.id);
+          return (
+            <div key={host.id} className={styles.hostItem}>
+              <div className={`${styles.healthIndicator} ${getHealthClass(host.id)}`} />
+              <div className={styles.hostInfo}>
+                <div className={styles.hostName}>
+                  {host.name}
+                  {!host.enabled && ' (disabled)'}
+                </div>
+                <div className={styles.hostUrl}>{host.url}</div>
+              </div>
+              <div className={styles.hostMeta}>
+                <div>{statusInfo.containers}</div>
+                <div className={styles.hostVersion}>{statusInfo.version}</div>
+              </div>
+              <input
+                type="checkbox"
+                className={styles.enabledToggle}
+                checked={host.enabled}
+                onChange={() => toggleHost(host.id)}
+                title={host.enabled ? 'Disable host' : 'Enable host'}
+              />
+              <button
+                className={styles.removeButton}
+                onClick={() => removeHost(host.id)}
+                title="Remove host"
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
       </div>
 
       {showAddForm ? (
@@ -293,7 +345,7 @@ export const HostManager: React.FC<HostManagerProps> = ({ apiUrl, onHostsChanged
           <input
             className={styles.input}
             type="text"
-            placeholder="Docker API URL (e.g., http://192.168.1.10:2375)"
+            placeholder="Agent URL (e.g., http://192.168.1.10:5000)"
             value={newHostUrl}
             onChange={(e) => setNewHostUrl(e.target.value)}
           />
@@ -301,9 +353,9 @@ export const HostManager: React.FC<HostManagerProps> = ({ apiUrl, onHostsChanged
             <button
               className={styles.addButton}
               onClick={addHost}
-              disabled={adding || !newHostName.trim() || !newHostUrl.trim()}
+              disabled={!newHostName.trim() || !newHostUrl.trim()}
             >
-              {adding ? 'Adding...' : 'Add Host'}
+              Add Agent
             </button>
             <button
               className={styles.cancelButton}
@@ -311,6 +363,7 @@ export const HostManager: React.FC<HostManagerProps> = ({ apiUrl, onHostsChanged
                 setShowAddForm(false);
                 setNewHostName('');
                 setNewHostUrl('');
+                setError(null);
               }}
             >
               Cancel
@@ -319,7 +372,7 @@ export const HostManager: React.FC<HostManagerProps> = ({ apiUrl, onHostsChanged
         </div>
       ) : (
         <button className={styles.showFormButton} onClick={() => setShowAddForm(true)}>
-          + Add Docker Host
+          + Add Docker Metrics Agent
         </button>
       )}
     </div>
