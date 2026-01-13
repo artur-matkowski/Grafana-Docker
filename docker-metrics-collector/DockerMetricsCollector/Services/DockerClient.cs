@@ -93,6 +93,116 @@ public class DockerClient
         }
     }
 
+    /// <summary>
+    /// Start a stopped container.
+    /// </summary>
+    public async Task<(bool Success, string? Error)> StartContainerAsync(string containerId)
+    {
+        try
+        {
+            var response = await _httpClient.PostAsync(
+                $"{_baseUrl}/containers/{containerId}/start", null);
+
+            if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.NotModified)
+                return (true, null);
+
+            var error = await response.Content.ReadAsStringAsync();
+            return (false, $"Failed to start container: {response.StatusCode} - {error}");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Stop a running container.
+    /// </summary>
+    public async Task<(bool Success, string? Error)> StopContainerAsync(string containerId, int timeoutSeconds = 10)
+    {
+        try
+        {
+            var response = await _httpClient.PostAsync(
+                $"{_baseUrl}/containers/{containerId}/stop?t={timeoutSeconds}", null);
+
+            if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.NotModified)
+                return (true, null);
+
+            var error = await response.Content.ReadAsStringAsync();
+            return (false, $"Failed to stop container: {response.StatusCode} - {error}");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Restart a container.
+    /// </summary>
+    public async Task<(bool Success, string? Error)> RestartContainerAsync(string containerId, int timeoutSeconds = 10)
+    {
+        try
+        {
+            var response = await _httpClient.PostAsync(
+                $"{_baseUrl}/containers/{containerId}/restart?t={timeoutSeconds}", null);
+
+            if (response.IsSuccessStatusCode)
+                return (true, null);
+
+            var error = await response.Content.ReadAsStringAsync();
+            return (false, $"Failed to restart container: {response.StatusCode} - {error}");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Pause a running container.
+    /// </summary>
+    public async Task<(bool Success, string? Error)> PauseContainerAsync(string containerId)
+    {
+        try
+        {
+            var response = await _httpClient.PostAsync(
+                $"{_baseUrl}/containers/{containerId}/pause", null);
+
+            if (response.IsSuccessStatusCode)
+                return (true, null);
+
+            var error = await response.Content.ReadAsStringAsync();
+            return (false, $"Failed to pause container: {response.StatusCode} - {error}");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Unpause a paused container.
+    /// </summary>
+    public async Task<(bool Success, string? Error)> UnpauseContainerAsync(string containerId)
+    {
+        try
+        {
+            var response = await _httpClient.PostAsync(
+                $"{_baseUrl}/containers/{containerId}/unpause", null);
+
+            if (response.IsSuccessStatusCode)
+                return (true, null);
+
+            var error = await response.Content.ReadAsStringAsync();
+            return (false, $"Failed to unpause container: {response.StatusCode} - {error}");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
     private static ContainerMetricSnapshot? ParseContainerStats(
         string hostId,
         string hostName,
