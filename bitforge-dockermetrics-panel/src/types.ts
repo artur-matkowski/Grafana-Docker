@@ -3,6 +3,8 @@ export interface SimpleOptions {
   containerIds: string[];
   showAllContainers: boolean;
   selectedMetrics: string[];
+  containersPerRow: number;
+  metricsPerRow: number;
 }
 
 // Metric definition for display configuration
@@ -13,6 +15,7 @@ export interface MetricDefinition {
   color: string;
   format: (value: number) => string;
   getValue: (snapshot: ContainerMetricSnapshot) => number | null;
+  isRate?: boolean; // If true, calculate rate (delta/time) from cumulative values
 }
 
 // All available metrics from the collector
@@ -46,32 +49,36 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
     label: 'Net RX',
     unit: 'KB/s',
     color: '#FF9830',
-    format: (v) => (v / 1024).toFixed(1),
+    format: (v) => v.toFixed(1),
     getValue: (s) => s.networkRxBytes,
+    isRate: true,
   },
   {
     key: 'networkTxBytes',
     label: 'Net TX',
     unit: 'KB/s',
     color: '#F2495C',
-    format: (v) => (v / 1024).toFixed(1),
+    format: (v) => v.toFixed(1),
     getValue: (s) => s.networkTxBytes,
+    isRate: true,
   },
   {
     key: 'diskReadBytes',
     label: 'Disk Read',
-    unit: 'MB',
+    unit: 'KB/s',
     color: '#B877D9',
-    format: (v) => (v / (1024 * 1024)).toFixed(1),
+    format: (v) => v.toFixed(1),
     getValue: (s) => s.diskReadBytes,
+    isRate: true,
   },
   {
     key: 'diskWriteBytes',
     label: 'Disk Write',
-    unit: 'MB',
+    unit: 'KB/s',
     color: '#8F3BB8',
-    format: (v) => (v / (1024 * 1024)).toFixed(1),
+    format: (v) => v.toFixed(1),
     getValue: (s) => s.diskWriteBytes,
+    isRate: true,
   },
   {
     key: 'uptimeSeconds',

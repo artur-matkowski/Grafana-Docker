@@ -6,7 +6,17 @@ import { useStyles2 } from '@grafana/ui';
 
 interface Props extends PanelProps<SimpleOptions> {}
 
-const getStyles = () => {
+const getStyles = (containersPerRow: number, metricsPerRow: number) => {
+  const containerGridCols =
+    containersPerRow > 0
+      ? `repeat(${containersPerRow}, 1fr)`
+      : 'repeat(auto-fill, minmax(300px, 1fr))';
+
+  const metricsGridCols =
+    metricsPerRow > 0
+      ? `repeat(${metricsPerRow}, 1fr)`
+      : 'repeat(auto-fill, minmax(120px, 1fr))';
+
   return {
     wrapper: css`
       position: relative;
@@ -56,7 +66,7 @@ const getStyles = () => {
     `,
     containersGrid: css`
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      grid-template-columns: ${containerGridCols};
       gap: 12px;
       padding: 0 4px;
     `,
@@ -87,7 +97,7 @@ const getStyles = () => {
     `,
     metricsGrid: css`
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      grid-template-columns: ${metricsGridCols};
       gap: 10px;
     `,
     metric: css`
@@ -119,27 +129,6 @@ const getStyles = () => {
       font-size: 10px;
       color: #888;
       margin-left: 2px;
-    `,
-    sparklineContainer: css`
-      position: relative;
-      height: 40px;
-      margin-top: 4px;
-    `,
-    sparklineSvg: css`
-      display: block;
-    `,
-    scaleLabels: css`
-      position: absolute;
-      right: 0;
-      top: 0;
-      bottom: 0;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      font-size: 8px;
-      color: #666;
-      text-align: right;
-      pointer-events: none;
     `,
     emptyState: css`
       color: #888;
@@ -173,7 +162,7 @@ const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatV
   const width = 100;
   const padding = 2;
   const chartHeight = height - padding * 2;
-  const chartWidth = width - 28; // Leave space for scale labels
+  const chartWidth = width - 28;
 
   const min = Math.min(...data);
   const max = Math.max(...data);
@@ -187,7 +176,6 @@ const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatV
     })
     .join(' ');
 
-  // Calculate nice scale values
   const scaleMax = formatValue(max);
   const scaleMin = formatValue(min);
 
@@ -200,7 +188,6 @@ const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatV
         preserveAspectRatio="none"
         style={{ display: 'block' }}
       >
-        {/* Grid lines */}
         <line x1="0" y1={padding} x2={chartWidth} y2={padding} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
         <line
           x1="0"
@@ -218,11 +205,7 @@ const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatV
           stroke="rgba(255,255,255,0.1)"
           strokeWidth="0.5"
         />
-
-        {/* Data line */}
         <polyline fill="none" stroke={color} strokeWidth="1.5" points={points} />
-
-        {/* Scale labels */}
         <text x={width - 2} y={padding + 3} fontSize="7" fill="#666" textAnchor="end">
           {scaleMax}
         </text>
@@ -241,23 +224,55 @@ interface ContainerWithMetrics {
   hostName: string;
   metrics: ContainerMetricSnapshot[];
   latest: ContainerMetricSnapshot | null;
+  rateData: Map<string, number[]>; // Calculated rate data for rate metrics
+  latestRates: Map<string, number>; // Latest rate values
+}
+
+// Calculate rate (delta/time) from cumulative values
+function calculateRates(
+  metrics: ContainerMetricSnapshot[],
+  metricKey: string,
+  getValue: (s: ContainerMetricSnapshot) => number | null
+): number[] {
+  if (metrics.length < 2) return [];
+
+  const rates: number[] = [];
+  for (let i = 1; i < metrics.length; i++) {
+    const prev = metrics[i - 1];
+    const curr = metrics[i];
+    const prevVal = getValue(prev);
+    const currVal = getValue(curr);
+
+    if (prevVal === null || currVal === null) continue;
+
+    const timeDelta = (new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime()) / 1000;
+    if (timeDelta <= 0) continue;
+
+    const valueDelta = currVal - prevVal;
+    // Handle counter resets (when container restarts)
+    const rate = valueDelta >= 0 ? valueDelta / timeDelta : 0;
+    // Convert to KB/s
+    rates.push(rate / 1024);
+  }
+
+  return rates;
 }
 
 export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange }) => {
-  const styles = useStyles2(getStyles);
+  const containersPerRow = options.containersPerRow || 0;
+  const metricsPerRow = options.metricsPerRow || 0;
+  const styles = useStyles2(() => getStyles(containersPerRow, metricsPerRow));
 
   const [allMetrics, setAllMetrics] = useState<ContainerMetricSnapshot[]>([]);
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
-  // Get selected metric definitions
   const selectedMetricDefs = useMemo(() => {
     const selected = options.selectedMetrics || DEFAULT_METRICS;
     return AVAILABLE_METRICS.filter((m) => selected.includes(m.key));
   }, [options.selectedMetrics]);
 
-  // Fetch containers list
   useEffect(() => {
     const fetchContainers = async () => {
       if (!options.apiUrl) return;
@@ -277,7 +292,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     return () => clearInterval(interval);
   }, [options.apiUrl]);
 
-  // Determine which container IDs to fetch
   const targetContainerIds = useMemo(() => {
     if (options.showAllContainers) {
       return containers.map((c) => c.containerId);
@@ -285,7 +299,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     return options.containerIds || [];
   }, [options.showAllContainers, options.containerIds, containers]);
 
-  // Fetch metrics for selected containers
   useEffect(() => {
     const fetchMetrics = async () => {
       if (!options.apiUrl) {
@@ -335,7 +348,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     return () => clearInterval(interval);
   }, [options.apiUrl, targetContainerIds, options.showAllContainers, timeRange.from.valueOf(), timeRange.to.valueOf()]);
 
-  // Group metrics by container and host
   const containersByHost = useMemo(() => {
     const byContainer = new Map<string, ContainerWithMetrics>();
 
@@ -348,6 +360,8 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           hostName: c.hostName,
           metrics: [],
           latest: null,
+          rateData: new Map(),
+          latestRates: new Map(),
         });
       }
     }
@@ -362,16 +376,28 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           hostName: m.hostName,
           metrics: [],
           latest: null,
+          rateData: new Map(),
+          latestRates: new Map(),
         };
         byContainer.set(m.containerId, container);
       }
       container.metrics.push(m);
     }
 
+    // Sort metrics and calculate rates
     for (const container of byContainer.values()) {
       if (container.metrics.length > 0) {
         container.metrics.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
         container.latest = container.metrics[container.metrics.length - 1];
+
+        // Calculate rates for rate-based metrics
+        for (const metricDef of AVAILABLE_METRICS.filter((m) => m.isRate)) {
+          const rates = calculateRates(container.metrics, metricDef.key, metricDef.getValue);
+          container.rateData.set(metricDef.key, rates);
+          if (rates.length > 0) {
+            container.latestRates.set(metricDef.key, rates[rates.length - 1]);
+          }
+        }
       }
     }
 
@@ -398,13 +424,42 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   const totalContainers = containersByHost.reduce((sum, h) => sum + h.containers.length, 0);
   const totalHosts = containersByHost.length;
 
-  // Render metric for a container
   const renderMetric = (container: ContainerWithMetrics, metricDef: MetricDefinition) => {
     const latest = container.latest;
+
+    // For rate metrics, use calculated rate data
+    if (metricDef.isRate) {
+      const rateData = container.rateData.get(metricDef.key) || [];
+      const latestRate = container.latestRates.get(metricDef.key);
+
+      if (latestRate === undefined && rateData.length === 0) {
+        return null;
+      }
+
+      const displayValue = latestRate !== undefined ? latestRate : 0;
+
+      return (
+        <div key={metricDef.key} className={styles.metric}>
+          <div className={styles.metricHeader}>
+            <span className={styles.metricColorDot} style={{ background: metricDef.color }} />
+            <span className={styles.metricLabel}>{metricDef.label}</span>
+          </div>
+          <div className={styles.metricValue}>
+            {displayValue.toFixed(1)}
+            <span className={styles.metricUnit}>{metricDef.unit}</span>
+          </div>
+          {rateData.length > 1 && (
+            <Sparkline data={rateData} color={metricDef.color} formatValue={(v) => v.toFixed(1)} />
+          )}
+        </div>
+      );
+    }
+
+    // For non-rate metrics, use direct values
     const rawValue = latest ? metricDef.getValue(latest) : null;
 
     if (rawValue === null || rawValue === undefined) {
-      return null; // Skip metrics with null values (e.g., pressure metrics not available)
+      return null;
     }
 
     const data = container.metrics
@@ -421,9 +476,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           {metricDef.format(rawValue)}
           <span className={styles.metricUnit}>{metricDef.unit}</span>
         </div>
-        {data.length > 1 && (
-          <Sparkline data={data} color={metricDef.color} formatValue={metricDef.format} />
-        )}
+        {data.length > 1 && <Sparkline data={data} color={metricDef.color} formatValue={metricDef.format} />}
       </div>
     );
   };
@@ -476,9 +529,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
         <div className={styles.emptyState}>
           No metrics selected.
           <br />
-          <span style={{ fontSize: '11px' }}>
-            Select metrics to display in panel options under "Display".
-          </span>
+          <span style={{ fontSize: '11px' }}>Select metrics to display in panel options under "Display".</span>
         </div>
       </div>
     );
