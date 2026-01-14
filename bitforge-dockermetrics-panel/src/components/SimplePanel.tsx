@@ -5,11 +5,12 @@ import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 import { proxyGet, proxyPost } from '../utils/proxy';
 
-// Debug logging
+// Debug logging - using console.warn to avoid production stripping
 const DEBUG = true;
 const log = (area: string, message: string, data?: unknown) => {
   if (DEBUG) {
-    console.log(`[DockerMetrics:${area}]`, message, data !== undefined ? data : '');
+    // Use warn instead of log - less likely to be stripped
+    console.warn(`[DockerMetrics:${area}]`, message, data !== undefined ? data : '');
   }
 };
 
@@ -470,6 +471,15 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   renderCountRef.current++;
   log('Render', `Component rendering #${renderCountRef.current}`);
 
+  // Stabilize time range - round to nearest 10 seconds to prevent constant re-fetches
+  // when using "Last X minutes" with live "now" endpoint
+  const stableTimeFrom = useMemo(() => {
+    return Math.floor(timeRange.from.valueOf() / 10000) * 10000;
+  }, [timeRange.from]);
+  const stableTimeTo = useMemo(() => {
+    return Math.floor(timeRange.to.valueOf() / 10000) * 10000;
+  }, [timeRange.to]);
+
   const hosts = useMemo(() => options.hosts || DEFAULT_HOSTS, [options.hosts]);
   const enabledHosts = useMemo(() => hosts.filter((h: HostConfig) => h.enabled), [hosts]);
   const containersPerRow = options.containersPerRow || 0;
@@ -565,6 +575,12 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   const totalAvailableRef = useRef<number>(0);
   const initialFetchDoneRef = useRef<boolean>(false);
 
+  // Time range refs - used by fetch callbacks to get latest values without causing re-runs
+  const stableTimeFromRef = useRef<number>(stableTimeFrom);
+  const stableTimeToRef = useRef<number>(stableTimeTo);
+  stableTimeFromRef.current = stableTimeFrom;
+  stableTimeToRef.current = stableTimeTo;
+
   // Fetch containers from all enabled hosts
   useEffect(() => {
     log('Effect:Containers', 'useEffect triggered');
@@ -616,18 +632,42 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     return options.containerIds || [];
   }, [options.showAllContainers, options.containerIds, containers]);
 
-  // Reset fetch state when containers or time range changes significantly
-  const resetKey = `${targetContainerIds.join(',')}-${timeRange.from.valueOf()}-${timeRange.to.valueOf()}`;
+  // Reset fetch state ONLY when container selection changes
+  // Time range changes should NOT trigger a reset - we prune old data instead
+  const resetKey = targetContainerIds.join(',');
   const prevResetKeyRef = useRef<string>('');
   useEffect(() => {
-    log('Effect:Reset', `useEffect triggered, resetKey changed from "${prevResetKeyRef.current.substring(0, 50)}..." to "${resetKey.substring(0, 50)}..."`);
-    prevResetKeyRef.current = resetKey;
-    metricsMapRef.current.clear();
-    lastTimestampRef.current = null;
-    totalAvailableRef.current = 0;
-    initialFetchDoneRef.current = false;
-    setAllMetrics([]);
+    if (prevResetKeyRef.current !== resetKey) {
+      log('Effect:Reset', `Container selection changed, resetting`);
+      prevResetKeyRef.current = resetKey;
+      metricsMapRef.current.clear();
+      lastTimestampRef.current = null;
+      totalAvailableRef.current = 0;
+      initialFetchDoneRef.current = false;
+      setAllMetrics([]);
+    }
   }, [resetKey, setAllMetrics]);
+
+  // Prune old metrics that are outside the current time range
+  useEffect(() => {
+    const fromMs = stableTimeFrom;
+    const map = metricsMapRef.current;
+    let pruned = 0;
+
+    for (const [key, metric] of map.entries()) {
+      const metricTime = new Date(metric.timestamp).getTime();
+      if (metricTime < fromMs) {
+        map.delete(key);
+        pruned++;
+      }
+    }
+
+    if (pruned > 0) {
+      log('Effect:Prune', `Pruned ${pruned} old metrics outside time range`);
+      // Update state with pruned data
+      setAllMetrics(Array.from(map.values()));
+    }
+  }, [stableTimeFrom, setAllMetrics]);
 
   // Merge new metrics with existing, deduplicating by containerId+timestamp
   // Note: No dependencies - uses refs and sets all metrics, filtering happens in useMemo
@@ -682,7 +722,8 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   }, []);
 
   // Simple metrics fetching - initial full fetch, then incremental updates
-  const metricsEffectKey = `${enabledHosts.map(h => h.id + h.url).join(',')}-${targetContainerIds.join(',')}-${options.showAllContainers}-${options.refreshInterval}-${selectedFields.join(',')}-${timeRange.from.valueOf()}-${timeRange.to.valueOf()}`;
+  // Note: Time range is accessed via refs to prevent re-running effect when time changes
+  const metricsEffectKey = `${enabledHosts.map(h => h.id + h.url).join(',')}-${targetContainerIds.join(',')}-${options.showAllContainers}-${options.refreshInterval}-${selectedFields.join(',')}`;
   const prevMetricsEffectKeyRef = useRef<string>('');
   useEffect(() => {
     const keyChanged = prevMetricsEffectKeyRef.current !== metricsEffectKey;
@@ -717,10 +758,11 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
 
       log('Effect:Metrics', `fetchAllMetrics called, isIncremental: ${isIncremental}`);
 
+      // Use refs to get latest time values without causing effect re-runs
       const from = isIncremental && lastTimestampRef.current
         ? lastTimestampRef.current
-        : timeRange.from.toISOString();
-      const to = timeRange.to.toISOString();
+        : new Date(stableTimeFromRef.current).toISOString();
+      const to = new Date(stableTimeToRef.current).toISOString();
 
       if (!isIncremental) {
         setLoading(true);
@@ -809,13 +851,12 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     // Use stable string keys instead of object references to prevent re-runs
+    // Note: Time range NOT included - accessed via refs to prevent re-runs when time changes
     enabledHosts.map(h => h.id + h.url).join(','),
     targetContainerIds.join(','),
     options.showAllContainers,
     options.refreshInterval,
     selectedFields.join(','),
-    timeRange.from.valueOf(),
-    timeRange.to.valueOf(),
   ]);
 
   // Build host URL lookup
