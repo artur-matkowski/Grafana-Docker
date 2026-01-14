@@ -5,6 +5,14 @@ import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 import { proxyGet, proxyPost } from '../utils/proxy';
 
+// Debug logging
+const DEBUG = true;
+const log = (area: string, message: string, data?: unknown) => {
+  if (DEBUG) {
+    console.log(`[DockerMetrics:${area}]`, message, data !== undefined ? data : '');
+  }
+};
+
 // Map metric keys to API field names
 const METRIC_TO_FIELD: Record<string, string> = {
   cpuPercent: 'cpuPercent',
@@ -458,6 +466,10 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
 };
 
 export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange }) => {
+  const renderCountRef = useRef(0);
+  renderCountRef.current++;
+  log('Render', `Component rendering #${renderCountRef.current}`);
+
   const hosts = useMemo(() => options.hosts || DEFAULT_HOSTS, [options.hosts]);
   const enabledHosts = useMemo(() => hosts.filter((h: HostConfig) => h.enabled), [hosts]);
   const containersPerRow = options.containersPerRow || 0;
@@ -476,10 +488,28 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
       metricsPerRow > 0 ? `repeat(${metricsPerRow}, 1fr)` : 'repeat(auto-fill, minmax(120px, 1fr))',
   };
 
-  const [allMetrics, setAllMetrics] = useState<ContainerMetrics[]>([]);
-  const [containers, setContainers] = useState<ContainerInfo[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
+  const [allMetrics, setAllMetricsRaw] = useState<ContainerMetrics[]>([]);
+  const [containers, setContainersRaw] = useState<ContainerInfo[]>([]);
+  const [error, setErrorRaw] = useState<string | null>(null);
+  const [loading, setLoadingRaw] = useState<boolean>(false);
+
+  // Wrapped setters with logging
+  const setAllMetrics = useCallback((metrics: ContainerMetrics[]) => {
+    log('State', `setAllMetrics called, count: ${metrics.length}`);
+    setAllMetricsRaw(metrics);
+  }, []);
+  const setContainers = useCallback((c: ContainerInfo[]) => {
+    log('State', `setContainers called, count: ${c.length}`);
+    setContainersRaw(c);
+  }, []);
+  const setError = useCallback((e: string | null) => {
+    log('State', `setError called: ${e}`);
+    setErrorRaw(e);
+  }, []);
+  const setLoading = useCallback((l: boolean) => {
+    log('State', `setLoading called: ${l}`);
+    setLoadingRaw(l);
+  }, []);
 
   // Track real-time status overrides (from control actions)
   const [statusOverrides, setStatusOverrides] = useState<Map<string, ContainerStatus>>(new Map());
@@ -537,7 +567,9 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
 
   // Fetch containers from all enabled hosts
   useEffect(() => {
+    log('Effect:Containers', 'useEffect triggered');
     const fetchContainers = async () => {
+      log('Effect:Containers', 'fetchContainers called');
       if (enabledHosts.length === 0) {
         setContainers([]);
         return;
@@ -571,8 +603,11 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
 
     fetchContainers();
     const interval = setInterval(fetchContainers, 30000);
-    return () => clearInterval(interval);
-  }, [enabledHosts]);
+    return () => {
+      log('Effect:Containers', 'cleanup');
+      clearInterval(interval);
+    };
+  }, [enabledHosts, setContainers]);
 
   const targetContainerIds = useMemo(() => {
     if (options.showAllContainers) {
@@ -582,13 +617,17 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   }, [options.showAllContainers, options.containerIds, containers]);
 
   // Reset fetch state when containers or time range changes significantly
+  const resetKey = `${targetContainerIds.join(',')}-${timeRange.from.valueOf()}-${timeRange.to.valueOf()}`;
+  const prevResetKeyRef = useRef<string>('');
   useEffect(() => {
+    log('Effect:Reset', `useEffect triggered, resetKey changed from "${prevResetKeyRef.current.substring(0, 50)}..." to "${resetKey.substring(0, 50)}..."`);
+    prevResetKeyRef.current = resetKey;
     metricsMapRef.current.clear();
     lastTimestampRef.current = null;
     totalAvailableRef.current = 0;
     initialFetchDoneRef.current = false;
     setAllMetrics([]);
-  }, [targetContainerIds.join(','), timeRange.from.valueOf(), timeRange.to.valueOf()]);
+  }, [resetKey, setAllMetrics]);
 
   // Merge new metrics with existing, deduplicating by containerId+timestamp
   // Note: No dependencies - uses refs and sets all metrics, filtering happens in useMemo
@@ -643,14 +682,25 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   }, []);
 
   // Simple metrics fetching - initial full fetch, then incremental updates
+  const metricsEffectKey = `${enabledHosts.map(h => h.id + h.url).join(',')}-${targetContainerIds.join(',')}-${options.showAllContainers}-${options.refreshInterval}-${selectedFields.join(',')}-${timeRange.from.valueOf()}-${timeRange.to.valueOf()}`;
+  const prevMetricsEffectKeyRef = useRef<string>('');
   useEffect(() => {
+    const keyChanged = prevMetricsEffectKeyRef.current !== metricsEffectKey;
+    log('Effect:Metrics', `useEffect triggered, keyChanged: ${keyChanged}`);
+    if (keyChanged) {
+      log('Effect:Metrics', `Key changed from "${prevMetricsEffectKeyRef.current.substring(0, 80)}..." to "${metricsEffectKey.substring(0, 80)}..."`);
+    }
+    prevMetricsEffectKeyRef.current = metricsEffectKey;
+
     if (enabledHosts.length === 0) {
+      log('Effect:Metrics', 'No enabled hosts, setting error');
       setError('No agents configured. Add Docker Metrics Agents in panel options.');
       setAllMetrics([]);
       return;
     }
 
     if (targetContainerIds.length === 0 && !options.showAllContainers) {
+      log('Effect:Metrics', 'No containers selected, setting error');
       setError('No containers selected. Enable "Show All Containers" or select specific containers.');
       setAllMetrics([]);
       return;
@@ -660,7 +710,12 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     let isCancelled = false;
 
     const fetchAllMetrics = async (isIncremental: boolean) => {
-      if (isCancelled) return;
+      if (isCancelled) {
+        log('Effect:Metrics', 'fetchAllMetrics skipped - cancelled');
+        return;
+      }
+
+      log('Effect:Metrics', `fetchAllMetrics called, isIncremental: ${isIncremental}`);
 
       const from = isIncremental && lastTimestampRef.current
         ? lastTimestampRef.current
@@ -700,13 +755,18 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                   hostName: host.name,
                 });
               }
-            } catch {
-              // Ignore individual host errors
+            } catch (e) {
+              log('Effect:Metrics', `Error fetching from host ${host.url}: ${e}`);
             }
           })
         );
 
-        if (isCancelled) return;
+        if (isCancelled) {
+          log('Effect:Metrics', 'fetchAllMetrics cancelled after fetch');
+          return;
+        }
+
+        log('Effect:Metrics', `Fetched ${newMetrics.length} metrics, totalAvailable: ${totalAvailable}`);
 
         // Only update totalAvailable from full fetches
         if (!isIncremental) {
@@ -720,6 +780,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
         }
 
       } catch (err) {
+        log('Effect:Metrics', `fetchAllMetrics error: ${err}`);
         if (!isCancelled) {
           setError(err instanceof Error ? err.message : 'Failed to fetch metrics');
           setLoading(false);
@@ -728,10 +789,12 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     };
 
     // Initial full fetch
+    log('Effect:Metrics', 'Starting initial full fetch');
     fetchAllMetrics(false);
 
     // Set up interval for incremental updates
     const refreshInterval = (options.refreshInterval || 10) * 1000;
+    log('Effect:Metrics', `Setting up interval with refreshInterval: ${refreshInterval}ms`);
     const interval = setInterval(() => {
       if (initialFetchDoneRef.current) {
         fetchAllMetrics(true);
@@ -739,6 +802,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     }, refreshInterval);
 
     return () => {
+      log('Effect:Metrics', 'cleanup - cancelling and clearing interval');
       isCancelled = true;
       clearInterval(interval);
     };

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { css } from '@emotion/css';
 import { HostConfig, HostStatus, AgentInfo } from '../types';
 import { proxyGet } from '../utils/proxy';
+import { PLUGIN_VERSION } from '../version';
 
 interface HostManagerProps {
   hosts: HostConfig[];
@@ -11,6 +12,23 @@ interface HostManagerProps {
 const styles = {
   container: css`
     padding: 8px 0;
+  `,
+  versionHeader: css`
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 8px;
+    margin-bottom: 12px;
+    background: rgba(50, 116, 217, 0.1);
+    border-radius: 4px;
+    font-size: 11px;
+  `,
+  versionTitle: css`
+    color: #3274d9;
+    font-weight: 500;
+  `,
+  versionNumber: css`
+    color: #888;
   `,
   hostList: css`
     margin-bottom: 12px;
@@ -281,6 +299,11 @@ export const HostManager: React.FC<HostManagerProps> = ({ hosts, onHostsChange }
 
   return (
     <div className={styles.container}>
+      <div className={styles.versionHeader}>
+        <span className={styles.versionTitle}>Docker Metrics Panel</span>
+        <span className={styles.versionNumber}>v{PLUGIN_VERSION}</span>
+      </div>
+
       {error && <div className={styles.error}>{error}</div>}
 
       <div className={styles.hostList}>
