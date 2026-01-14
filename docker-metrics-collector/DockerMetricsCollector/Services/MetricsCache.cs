@@ -31,6 +31,17 @@ public class MetricsCache
     }
 
     /// <summary>
+    /// Result of GetMetrics with metadata about available data.
+    /// </summary>
+    public class MetricsResult
+    {
+        public List<ContainerMetrics> Metrics { get; set; } = new();
+        public Dictionary<string, int> AvailablePerContainer { get; set; } = new();
+        public int TotalAvailable { get; set; }
+        public bool LimitApplied { get; set; }
+    }
+
+    /// <summary>
     /// Get metrics for containers within a time range with optional filtering.
     /// </summary>
     /// <param name="containerIds">Optional list of container IDs to filter (null = all)</param>
@@ -38,7 +49,7 @@ public class MetricsCache
     /// <param name="to">End time (default: now)</param>
     /// <param name="limit">Max points per container (null = unlimited)</param>
     /// <param name="latest">If true, return only the latest point per container</param>
-    public IEnumerable<ContainerMetrics> GetMetrics(
+    public MetricsResult GetMetrics(
         IEnumerable<string>? containerIds = null,
         DateTimeOffset? from = null,
         DateTimeOffset? to = null,
@@ -49,7 +60,8 @@ public class MetricsCache
         var toTime = to ?? DateTimeOffset.UtcNow;
         var containerIdSet = containerIds?.ToHashSet();
 
-        var result = new List<ContainerMetrics>();
+        var result = new MetricsResult();
+        var limitApplied = false;
 
         foreach (var kvp in _metrics)
         {
@@ -63,34 +75,45 @@ public class MetricsCache
             {
                 if (kvp.Value.Count == 0) continue;
 
+                // Count total available in time range for this container
+                var inRange = kvp.Value
+                    .Where(m => m.Timestamp >= fromTime && m.Timestamp <= toTime)
+                    .ToList();
+
+                var availableCount = inRange.Count;
+                result.AvailablePerContainer[kvp.Key] = availableCount;
+                result.TotalAvailable += availableCount;
+
                 if (latest)
                 {
                     // Return only the latest metric for this container
-                    var latestMetric = kvp.Value
-                        .Where(m => m.Timestamp >= fromTime && m.Timestamp <= toTime)
+                    var latestMetric = inRange
                         .OrderByDescending(m => m.Timestamp)
                         .FirstOrDefault();
                     if (latestMetric != null)
                     {
-                        result.Add(latestMetric);
+                        result.Metrics.Add(latestMetric);
                     }
                 }
                 else
                 {
                     // Return metrics within time range, optionally limited
-                    var filtered = kvp.Value
-                        .Where(m => m.Timestamp >= fromTime && m.Timestamp <= toTime)
-                        .OrderByDescending(m => m.Timestamp);
+                    var filtered = inRange.OrderByDescending(m => m.Timestamp);
 
-                    var items = limit.HasValue
-                        ? filtered.Take(limit.Value)
-                        : filtered;
-
-                    result.AddRange(items);
+                    if (limit.HasValue && availableCount > limit.Value)
+                    {
+                        limitApplied = true;
+                        result.Metrics.AddRange(filtered.Take(limit.Value));
+                    }
+                    else
+                    {
+                        result.Metrics.AddRange(filtered);
+                    }
                 }
             }
         }
 
+        result.LimitApplied = limitApplied;
         return result;
     }
 

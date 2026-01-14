@@ -78,6 +78,11 @@ update_versions() {
     local pkg_file="${SCRIPT_DIR}/bitforge-dockermetrics-panel/package.json"
     sed -i 's/"version": "[^"]*"/"version": "'"${version}"'"/' "$pkg_file"
 
+    # Update version.ts for frontend display
+    local version_file="${SCRIPT_DIR}/bitforge-dockermetrics-panel/src/version.ts"
+    echo "// This file is auto-updated by release.sh" > "$version_file"
+    echo "export const PLUGIN_VERSION = '${version}';" >> "$version_file"
+
     # Update Program.cs AgentVersion
     local program_file="${SCRIPT_DIR}/docker-metrics-collector/DockerMetricsCollector/Program.cs"
     sed -i "s/AgentVersion = \"[^\"]*\"/AgentVersion = \"${version}\"/" "$program_file"

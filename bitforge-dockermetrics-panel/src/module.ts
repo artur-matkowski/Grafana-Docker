@@ -4,9 +4,17 @@ import { SimplePanel } from './components/SimplePanel';
 import { HostManagerEditor } from './components/HostManagerEditor';
 import { ContainerSelectorEditor } from './components/ContainerSelectorEditor';
 import { MetricSelectorEditor } from './components/MetricSelectorEditor';
+import { VersionInfoEditor } from './components/VersionInfoEditor';
 
 export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOptions((builder) => {
   return builder
+    .addCustomEditor({
+      id: 'versionInfo',
+      path: '__versionInfo',
+      name: '',
+      category: ['About'],
+      editor: VersionInfoEditor,
+    })
     .addCustomEditor({
       id: 'hostManager',
       path: 'hosts',

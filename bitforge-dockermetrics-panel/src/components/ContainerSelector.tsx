@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { css } from '@emotion/css';
 import { ContainerInfo, HostConfig } from '../types';
+import { proxyGet } from '../utils/proxy';
 
 interface ContainerSelectorProps {
   hosts: HostConfig[];
@@ -174,19 +175,14 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
       await Promise.all(
         enabledHosts.map(async (host) => {
           try {
-            const response = await fetch(`${host.url}/api/containers?all=true`, {
-              signal: AbortSignal.timeout(15000), // 15s for slow Docker Desktop/WSL
-            });
-            if (response.ok) {
-              const data = await response.json();
-              // Add host info to each container
-              for (const container of data) {
-                allContainers.push({
-                  ...container,
-                  hostId: host.id,
-                  hostName: host.name,
-                });
-              }
+            const data = await proxyGet<Array<{ containerId: string; containerName: string; state: string; isRunning: boolean; isPaused: boolean }>>(`${host.url}/api/containers?all=true`);
+            // Add host info to each container
+            for (const container of data) {
+              allContainers.push({
+                ...container,
+                hostId: host.id,
+                hostName: host.name,
+              });
             }
           } catch {
             // Ignore individual host errors
