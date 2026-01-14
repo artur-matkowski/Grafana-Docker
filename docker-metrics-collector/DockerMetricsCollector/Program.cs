@@ -30,7 +30,7 @@ var app = builder.Build();
 // Enable CORS
 app.UseCors();
 
-const string AgentVersion = "2.0.0";
+const string AgentVersion = "1.1.0";
 
 // =====================
 // Health & Info Endpoints
@@ -86,13 +86,74 @@ app.MapGet("/api/containers/{containerId}/status", async (LocalDockerClient dock
 // Get all metrics (with optional filters)
 app.MapGet("/api/metrics", (
     MetricsCache cache,
-    string? containerId,
+    string? containerId,      // Single container (legacy support)
+    string? containerIds,     // Comma-separated container IDs
+    string? fields,           // Comma-separated field names to include
     DateTimeOffset? from,
-    DateTimeOffset? to) =>
+    DateTimeOffset? to,
+    int? limit,               // Max points per container
+    bool? latest) =>          // Return only latest point per container
 {
-    var metrics = cache.GetMetrics(containerId, from, to).ToList();
+    // Parse container IDs (support both single and multiple)
+    IEnumerable<string>? containerIdList = null;
+    if (!string.IsNullOrEmpty(containerIds))
+    {
+        containerIdList = containerIds.Split(',', StringSplitOptions.RemoveEmptyEntries);
+    }
+    else if (!string.IsNullOrEmpty(containerId))
+    {
+        containerIdList = new[] { containerId };
+    }
+
+    var metrics = cache.GetMetrics(containerIdList, from, to, limit, latest ?? false).ToList();
+
+    // If fields filter specified, project to only those fields
+    if (!string.IsNullOrEmpty(fields))
+    {
+        var fieldSet = fields.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(f => f.Trim().ToLowerInvariant())
+            .ToHashSet();
+
+        // Always include these base fields
+        fieldSet.Add("containerid");
+        fieldSet.Add("containername");
+        fieldSet.Add("timestamp");
+        fieldSet.Add("isrunning");
+        fieldSet.Add("ispaused");
+
+        var projected = metrics.Select(m => ProjectFields(m, fieldSet)).ToList();
+        return Results.Ok(projected);
+    }
+
     return Results.Ok(metrics);
 });
+
+// Helper to project only selected fields
+static Dictionary<string, object?> ProjectFields(ContainerMetrics m, HashSet<string> fields)
+{
+    var result = new Dictionary<string, object?>
+    {
+        ["containerId"] = m.ContainerId,
+        ["containerName"] = m.ContainerName,
+        ["timestamp"] = m.Timestamp,
+        ["isRunning"] = m.IsRunning,
+        ["isPaused"] = m.IsPaused
+    };
+
+    if (fields.Contains("cpupercent")) result["cpuPercent"] = m.CpuPercent;
+    if (fields.Contains("memorybytes")) result["memoryBytes"] = m.MemoryBytes;
+    if (fields.Contains("memorypercent")) result["memoryPercent"] = m.MemoryPercent;
+    if (fields.Contains("networkrxbytes")) result["networkRxBytes"] = m.NetworkRxBytes;
+    if (fields.Contains("networktxbytes")) result["networkTxBytes"] = m.NetworkTxBytes;
+    if (fields.Contains("diskreadbytes")) result["diskReadBytes"] = m.DiskReadBytes;
+    if (fields.Contains("diskwritebytes")) result["diskWriteBytes"] = m.DiskWriteBytes;
+    if (fields.Contains("uptimeseconds")) result["uptimeSeconds"] = m.UptimeSeconds;
+    if (fields.Contains("cpupressure")) result["cpuPressure"] = m.CpuPressure;
+    if (fields.Contains("memorypressure")) result["memoryPressure"] = m.MemoryPressure;
+    if (fields.Contains("iopressure")) result["ioPressure"] = m.IoPressure;
+
+    return result;
+}
 
 // Get latest metrics for all containers
 app.MapGet("/api/metrics/latest", (MetricsCache cache) =>

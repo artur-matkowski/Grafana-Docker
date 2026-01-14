@@ -1,8 +1,34 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { PanelProps } from '@grafana/data';
-import { SimpleOptions, ContainerMetrics, ContainerInfo, ContainerStatus, HostConfig, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DEFAULT_HOSTS, ContainerAction, PendingAction, PENDING_ACTION_LABELS } from 'types';
+import { SimpleOptions, ContainerMetrics, ContainerInfo, ContainerStatus, HostConfig, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DEFAULT_HOSTS, ContainerAction, PendingAction, PENDING_ACTION_LABELS, FetchStage } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
+
+// Map metric keys to API field names
+const METRIC_TO_FIELD: Record<string, string> = {
+  cpuPercent: 'cpuPercent',
+  memoryBytes: 'memoryBytes',
+  memoryPercent: 'memoryPercent',
+  networkRxBytes: 'networkRxBytes',
+  networkTxBytes: 'networkTxBytes',
+  diskReadBytes: 'diskReadBytes',
+  diskWriteBytes: 'diskWriteBytes',
+  uptimeSeconds: 'uptimeSeconds',
+  cpuPressureSome: 'cpuPressure',
+  cpuPressureFull: 'cpuPressure',
+  memoryPressureSome: 'memoryPressure',
+  memoryPressureFull: 'memoryPressure',
+  ioPressureSome: 'ioPressure',
+  ioPressureFull: 'ioPressure',
+};
+
+// Progressive fetch limits
+const FETCH_LIMITS = {
+  initial: 1,    // Latest point only
+  recent: 10,    // Last 10 points
+  history: 100,  // Last 100 points
+  complete: 0,   // All points (0 = unlimited)
+};
 
 interface Props extends PanelProps<SimpleOptions> {}
 
@@ -508,6 +534,24 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     return AVAILABLE_METRICS.filter((m) => selected.includes(m.key));
   }, [options.selectedMetrics]);
 
+  // Get unique API field names for selected metrics
+  const selectedFields = useMemo(() => {
+    const fields = new Set<string>();
+    const selected = options.selectedMetrics || DEFAULT_METRICS;
+    for (const key of selected) {
+      const field = METRIC_TO_FIELD[key];
+      if (field) {
+        fields.add(field);
+      }
+    }
+    return Array.from(fields);
+  }, [options.selectedMetrics]);
+
+  // Progressive fetch state
+  const [fetchStage, setFetchStage] = useState<FetchStage>('initial');
+  const lastTimestampRef = useRef<string | null>(null);
+  const metricsMapRef = useRef<Map<string, ContainerMetrics>>(new Map());
+
   // Fetch containers from all enabled hosts
   useEffect(() => {
     const fetchContainers = async () => {
@@ -523,7 +567,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           enabledHosts.map(async (host: HostConfig) => {
             try {
               const response = await fetch(`${host.url}/api/containers?all=true`, {
-                signal: AbortSignal.timeout(15000), // 15s timeout for slow Docker Desktop/WSL setups
+                signal: AbortSignal.timeout(15000),
               });
               if (response.ok) {
                 const data = await response.json();
@@ -559,50 +603,141 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     return options.containerIds || [];
   }, [options.showAllContainers, options.containerIds, containers]);
 
-  // Fetch metrics from all enabled hosts
+  // Reset fetch state when containers or time range changes significantly
   useEffect(() => {
-    const fetchMetrics = async () => {
-      if (enabledHosts.length === 0) {
-        setError('No agents configured. Add Docker Metrics Agents in panel options.');
-        setAllMetrics([]);
-        return;
-      }
+    setFetchStage('initial');
+    metricsMapRef.current.clear();
+    lastTimestampRef.current = null;
+    setAllMetrics([]);
+  }, [targetContainerIds.join(','), timeRange.from.valueOf(), timeRange.to.valueOf()]);
 
-      if (targetContainerIds.length === 0 && !options.showAllContainers) {
-        setError('No containers selected. Enable "Show All Containers" or select specific containers.');
-        setAllMetrics([]);
-        return;
-      }
+  // Merge new metrics with existing, deduplicating by containerId+timestamp
+  const mergeMetrics = useCallback((newMetrics: ContainerMetrics[]) => {
+    const map = metricsMapRef.current;
+    let maxTimestamp = lastTimestampRef.current;
 
-      setLoading(true);
-      setError(null);
+    for (const metric of newMetrics) {
+      const key = `${metric.containerId}:${metric.timestamp}`;
+      if (!map.has(key)) {
+        map.set(key, metric);
+        if (!maxTimestamp || metric.timestamp > maxTimestamp) {
+          maxTimestamp = metric.timestamp;
+        }
+      }
+    }
+
+    lastTimestampRef.current = maxTimestamp;
+
+    // Convert map to array, filtered by target containers
+    const result = Array.from(map.values()).filter(m =>
+      targetContainerIds.includes(m.containerId)
+    );
+
+    setAllMetrics(result);
+  }, [targetContainerIds]);
+
+  // Build URL with query parameters for metrics fetch
+  const buildMetricsUrl = useCallback((
+    hostUrl: string,
+    containerIds: string[],
+    fields: string[],
+    from: string,
+    to: string,
+    limit?: number,
+    latest?: boolean
+  ) => {
+    const params = new URLSearchParams();
+    params.set('from', from);
+    params.set('to', to);
+
+    if (containerIds.length > 0) {
+      params.set('containerIds', containerIds.join(','));
+    }
+    if (fields.length > 0) {
+      params.set('fields', fields.join(','));
+    }
+    if (limit && limit > 0) {
+      params.set('limit', limit.toString());
+    }
+    if (latest) {
+      params.set('latest', 'true');
+    }
+
+    return `${hostUrl}/api/metrics?${params.toString()}`;
+  }, []);
+
+  // Progressive metrics fetching
+  useEffect(() => {
+    if (enabledHosts.length === 0) {
+      setError('No agents configured. Add Docker Metrics Agents in panel options.');
+      setAllMetrics([]);
+      return;
+    }
+
+    if (targetContainerIds.length === 0 && !options.showAllContainers) {
+      setError('No containers selected. Enable "Show All Containers" or select specific containers.');
+      setAllMetrics([]);
+      return;
+    }
+
+    setError(null);
+
+    const fetchMetricsProgressive = async () => {
+      const from = timeRange.from.toISOString();
+      const to = timeRange.to.toISOString();
+
+      // Determine fetch parameters based on current stage
+      let limit: number | undefined;
+      let latest = false;
+      let fetchFrom = from;
+
+      switch (fetchStage) {
+        case 'initial':
+          latest = true;
+          setLoading(true);
+          break;
+        case 'recent':
+          limit = FETCH_LIMITS.recent;
+          break;
+        case 'history':
+          limit = FETCH_LIMITS.history;
+          break;
+        case 'complete':
+          // After complete, only fetch incremental updates
+          if (lastTimestampRef.current) {
+            fetchFrom = lastTimestampRef.current;
+          }
+          break;
+      }
 
       try {
-        const from = timeRange.from.toISOString();
-        const to = timeRange.to.toISOString();
-        const allFetchedMetrics: ContainerMetrics[] = [];
+        const newMetrics: ContainerMetrics[] = [];
 
         await Promise.all(
           enabledHosts.map(async (host: HostConfig) => {
             try {
-              // Fetch metrics from each host
-              const url = `${host.url}/api/metrics?from=${from}&to=${to}`;
+              const url = buildMetricsUrl(
+                host.url,
+                targetContainerIds,
+                selectedFields,
+                fetchFrom,
+                to,
+                limit,
+                latest
+              );
+
               const response = await fetch(url, {
-                signal: AbortSignal.timeout(15000), // 15s for slow Docker Desktop/WSL
+                signal: AbortSignal.timeout(15000),
               });
 
               if (response.ok) {
                 const metrics: ContainerMetrics[] = await response.json();
-                // Add host info to each metric
                 for (const metric of metrics) {
-                  // Always filter by current container IDs to avoid showing stale/removed containers
-                  if (targetContainerIds.includes(metric.containerId)) {
-                    allFetchedMetrics.push({
-                      ...metric,
-                      hostId: host.id,
-                      hostName: host.name,
-                    });
-                  }
+                  newMetrics.push({
+                    ...metric,
+                    hostId: host.id,
+                    hostName: host.name,
+                  });
                 }
               }
             } catch {
@@ -611,21 +746,46 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           })
         );
 
-        setAllMetrics(allFetchedMetrics);
+        mergeMetrics(newMetrics);
         setStatusOverrides(new Map());
+
+        // Progress to next stage
+        if (fetchStage === 'initial') {
+          setLoading(false);
+          setFetchStage('recent');
+        } else if (fetchStage === 'recent') {
+          setFetchStage('history');
+        } else if (fetchStage === 'history') {
+          setFetchStage('complete');
+        }
+        // 'complete' stage stays in complete for incremental updates
+
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch metrics');
-        setAllMetrics([]);
-      } finally {
         setLoading(false);
       }
     };
 
-    fetchMetrics();
-    const interval = setInterval(fetchMetrics, 10000);
+    // Initial fetch immediately
+    fetchMetricsProgressive();
+
+    // Set up interval for incremental updates
+    const refreshInterval = (options.refreshInterval || 10) * 1000;
+    const interval = setInterval(fetchMetricsProgressive, refreshInterval);
 
     return () => clearInterval(interval);
-  }, [enabledHosts, targetContainerIds, options.showAllContainers, timeRange.from.valueOf(), timeRange.to.valueOf()]);
+  }, [
+    enabledHosts,
+    targetContainerIds,
+    options.showAllContainers,
+    options.refreshInterval,
+    selectedFields,
+    fetchStage,
+    timeRange.from.valueOf(),
+    timeRange.to.valueOf(),
+    buildMetricsUrl,
+    mergeMetrics,
+  ]);
 
   // Build host URL lookup
   const hostUrlMap = useMemo(() => {
