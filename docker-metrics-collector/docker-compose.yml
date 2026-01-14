@@ -1,0 +1,27 @@
+services:
+  docker-metrics-agent:
+    image: ghcr.io/${GITHUB_USER:-your-username}/docker-metrics-agent:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: docker-metrics-agent
+    restart: unless-stopped
+    ports:
+      - "${PORT:-5000}:5000"
+    volumes:
+      # Docker socket for container metrics
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Cgroup filesystem for PSI metrics (read-only)
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+    environment:
+      - PORT=5000
+      - HOSTNAME=${HOSTNAME:-}
+    # Run with docker group permissions
+    group_add:
+      - ${DOCKER_GID:-999}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/info"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
