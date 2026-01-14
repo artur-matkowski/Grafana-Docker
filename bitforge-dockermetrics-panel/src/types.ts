@@ -7,6 +7,17 @@ export interface SimpleOptions {
   containersPerRow: number;
   metricsPerRow: number;
   enableContainerControls: boolean;
+  refreshInterval: number; // Refresh interval in seconds
+}
+
+// Progressive fetch stages
+export type FetchStage = 'initial' | 'recent' | 'history' | 'complete';
+
+// Fetch state for progressive loading
+export interface FetchState {
+  stage: FetchStage;
+  lastTimestamp: string | null;  // For incremental updates
+  loadedPoints: number;          // Points loaded so far
 }
 
 // Host configuration (stored in panel options)

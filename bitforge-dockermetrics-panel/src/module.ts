@@ -70,5 +70,17 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       description: 'Show start/stop/restart/pause buttons for each container',
       defaultValue: false,
       category: ['Controls'],
+    })
+    .addNumberInput({
+      path: 'refreshInterval',
+      name: 'Refresh Interval',
+      description: 'How often to fetch new metrics (in seconds)',
+      defaultValue: 10,
+      category: ['Data'],
+      settings: {
+        min: 5,
+        max: 300,
+        integer: true,
+      },
     });
 });
