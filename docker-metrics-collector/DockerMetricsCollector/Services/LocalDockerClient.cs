@@ -117,6 +117,9 @@ public class LocalDockerClient
         // Get PSI metrics from cgroups
         var (cpuPsi, memoryPsi, ioPsi) = _psiReader.GetContainerPsi(containerId);
 
+        // Get container uptime from inspect endpoint
+        var uptimeSeconds = await GetContainerUptimeAsync(containerId);
+
         // For paused containers, return minimal metrics with PSI
         if (isPaused)
         {
@@ -131,7 +134,7 @@ public class LocalDockerClient
                 NetworkTxBytes: 0,
                 DiskReadBytes: 0,
                 DiskWriteBytes: 0,
-                UptimeSeconds: 0,
+                UptimeSeconds: uptimeSeconds,
                 IsRunning: true,
                 IsPaused: true,
                 CpuPressure: cpuPsi,
@@ -151,12 +154,46 @@ public class LocalDockerClient
                 return null;
 
             var stats = JsonSerializer.Deserialize<JsonElement>(json);
-            return ParseContainerStats(containerId, containerName, state, stats, cpuPsi, memoryPsi, ioPsi);
+            return ParseContainerStats(containerId, containerName, state, stats, uptimeSeconds, cpuPsi, memoryPsi, ioPsi);
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Failed to get stats for container {ContainerId}", containerId);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Get container uptime in seconds from the StartedAt field.
+    /// </summary>
+    private async Task<long> GetContainerUptimeAsync(string containerId)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync($"/containers/{containerId}/json");
+            if (!response.IsSuccessStatusCode)
+                return 0;
+
+            var json = await response.Content.ReadAsStringAsync();
+            var container = JsonSerializer.Deserialize<JsonElement>(json);
+
+            var stateObj = container.GetProperty("State");
+            var startedAtStr = stateObj.GetProperty("StartedAt").GetString();
+
+            if (string.IsNullOrEmpty(startedAtStr))
+                return 0;
+
+            if (DateTimeOffset.TryParse(startedAtStr, out var startedAt))
+            {
+                var uptime = DateTimeOffset.UtcNow - startedAt;
+                return (long)Math.Max(0, uptime.TotalSeconds);
+            }
+
+            return 0;
+        }
+        catch
+        {
+            return 0;
         }
     }
 
@@ -250,6 +287,7 @@ public class LocalDockerClient
         string containerName,
         string state,
         JsonElement stats,
+        long uptimeSeconds,
         PsiMetrics? cpuPsi,
         PsiMetrics? memoryPsi,
         PsiMetrics? ioPsi)
@@ -317,7 +355,7 @@ public class LocalDockerClient
                 NetworkTxBytes: networkTx,
                 DiskReadBytes: diskRead,
                 DiskWriteBytes: diskWrite,
-                UptimeSeconds: 0,
+                UptimeSeconds: uptimeSeconds,
                 IsRunning: isRunning || isPaused,
                 IsPaused: isPaused,
                 CpuPressure: cpuPsi,

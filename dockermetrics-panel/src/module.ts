@@ -78,7 +78,7 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       defaultValue: 10,
       category: ['Data'],
       settings: {
-        min: 5,
+        min: 1,
         max: 300,
         integer: true,
       },

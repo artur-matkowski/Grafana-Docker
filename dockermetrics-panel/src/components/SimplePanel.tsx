@@ -5,8 +5,8 @@ import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 import { proxyGet, proxyPost } from '../utils/proxy';
 
-// Debug logging - using console.warn to avoid production stripping
-const DEBUG = true;
+// Debug logging - set to true when troubleshooting issues
+const DEBUG = false;
 const log = (area: string, message: string, data?: unknown) => {
   if (DEBUG) {
     // Use warn instead of log - less likely to be stripped
@@ -627,10 +627,14 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
 
   const targetContainerIds = useMemo(() => {
     if (options.showAllContainers) {
-      return containers.map((c) => c.containerId);
+      // Show all containers except blacklisted ones
+      const blacklist = options.containerBlacklist || [];
+      return containers
+        .map((c) => c.containerId)
+        .filter((id) => !blacklist.includes(id));
     }
     return options.containerIds || [];
-  }, [options.showAllContainers, options.containerIds, containers]);
+  }, [options.showAllContainers, options.containerIds, options.containerBlacklist, containers]);
 
   // Reset fetch state ONLY when container selection changes
   // Time range changes should NOT trigger a reset - we prune old data instead
@@ -870,9 +874,14 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
 
   const containersByHost = useMemo(() => {
     const byContainer = new Map<string, ContainerWithMetrics>();
+    const blacklist = options.containerBlacklist || [];
 
     for (const c of containers) {
-      if (options.showAllContainers || (options.containerIds || []).includes(c.containerId)) {
+      const isWhitelisted = (options.containerIds || []).includes(c.containerId);
+      const isBlacklisted = blacklist.includes(c.containerId);
+      const shouldInclude = options.showAllContainers ? !isBlacklisted : isWhitelisted;
+
+      if (shouldInclude) {
         byContainer.set(c.containerId, {
           containerId: c.containerId,
           containerName: c.containerName,
@@ -931,7 +940,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     }
 
     return Array.from(byHost.values()).sort((a, b) => a.hostName.localeCompare(b.hostName));
-  }, [containers, allMetrics, options.showAllContainers, options.containerIds, hostUrlMap]);
+  }, [containers, allMetrics, options.showAllContainers, options.containerIds, options.containerBlacklist, hostUrlMap]);
 
   const totalContainers = containersByHost.reduce((sum, h) => sum + h.containers.length, 0);
   const totalHosts = containersByHost.length;

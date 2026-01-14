@@ -1,7 +1,8 @@
 // Panel options
 export interface SimpleOptions {
   hosts: HostConfig[];
-  containerIds: string[];
+  containerIds: string[];           // Whitelist - containers to show when showAllContainers is false
+  containerBlacklist: string[];     // Blacklist - containers to exclude when showAllContainers is true
   showAllContainers: boolean;
   selectedMetrics: string[];
   containersPerRow: number;
