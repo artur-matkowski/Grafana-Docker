@@ -20,6 +20,20 @@ export interface FetchState {
   loadedPoints: number;          // Points loaded so far
 }
 
+// Metadata about available metrics from the collector
+export interface MetricsMetadata {
+  totalAvailable: number;
+  availablePerContainer: Record<string, number>;
+  limitApplied: boolean;
+  timestamp: string;
+}
+
+// Wrapped metrics response from collector
+export interface MetricsResponse {
+  metrics: ContainerMetrics[];
+  metadata: MetricsMetadata;
+}
+
 // Host configuration (stored in panel options)
 export interface HostConfig {
   id: string;

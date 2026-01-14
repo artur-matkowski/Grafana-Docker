@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { css } from '@emotion/css';
 import { HostConfig, HostStatus, AgentInfo } from '../types';
+import { proxyGet } from '../utils/proxy';
 
 interface HostManagerProps {
   hosts: HostConfig[];
@@ -192,21 +193,19 @@ export const HostManager: React.FC<HostManagerProps> = ({ hosts, onHostsChange }
         };
 
         try {
-          const response = await fetch(`${host.url}/api/info`, {
-            signal: AbortSignal.timeout(15000)
-          });
+          const info = await proxyGet<AgentInfo>(`${host.url}/api/info`);
+          status.isHealthy = info.dockerConnected;
+          status.hostname = info.hostname;
+          status.agentVersion = info.agentVersion;
+          status.dockerVersion = info.dockerVersion;
+          status.psiSupported = info.psiSupported;
 
-          if (response.ok) {
-            const info: AgentInfo = await response.json();
-            status.isHealthy = info.dockerConnected;
-            status.hostname = info.hostname;
-            status.agentVersion = info.agentVersion;
-            status.dockerVersion = info.dockerVersion;
-            status.psiSupported = info.psiSupported;
-            // Skip container count fetch - too slow on Docker Desktop/WSL
-            // ContainerSelector will show container count instead
-          } else {
-            status.lastError = `HTTP ${response.status}`;
+          // Fetch container count
+          try {
+            const containers = await proxyGet<Array<{ containerId: string }>>(`${host.url}/api/containers?all=true`);
+            status.containerCount = containers.length;
+          } catch {
+            // Ignore container count errors
           }
         } catch (err) {
           status.lastError = err instanceof Error ? err.message : 'Connection failed';

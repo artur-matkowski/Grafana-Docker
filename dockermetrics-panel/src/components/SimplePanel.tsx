@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { PanelProps } from '@grafana/data';
-import { SimpleOptions, ContainerMetrics, ContainerInfo, ContainerStatus, HostConfig, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DEFAULT_HOSTS, ContainerAction, PendingAction, PENDING_ACTION_LABELS, FetchStage } from 'types';
+import { SimpleOptions, ContainerMetrics, ContainerInfo, ContainerStatus, HostConfig, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DEFAULT_HOSTS, ContainerAction, PendingAction, PENDING_ACTION_LABELS, MetricsResponse } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 import { proxyGet, proxyPost } from '../utils/proxy';
@@ -23,13 +23,6 @@ const METRIC_TO_FIELD: Record<string, string> = {
   ioPressureFull: 'ioPressure',
 };
 
-// Progressive fetch limits
-const FETCH_LIMITS = {
-  initial: 1,    // Latest point only
-  recent: 10,    // Last 10 points
-  history: 100,  // Last 100 points
-  complete: 0,   // All points (0 = unlimited)
-};
 
 interface Props extends PanelProps<SimpleOptions> {}
 
@@ -536,10 +529,11 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     return Array.from(fields);
   }, [options.selectedMetrics]);
 
-  // Progressive fetch state
-  const [fetchStage, setFetchStage] = useState<FetchStage>('initial');
+  // Fetch state - using refs to avoid re-render loops
   const lastTimestampRef = useRef<string | null>(null);
   const metricsMapRef = useRef<Map<string, ContainerMetrics>>(new Map());
+  const totalAvailableRef = useRef<number>(0);
+  const initialFetchDoneRef = useRef<boolean>(false);
 
   // Fetch containers from all enabled hosts
   useEffect(() => {
@@ -589,13 +583,15 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
 
   // Reset fetch state when containers or time range changes significantly
   useEffect(() => {
-    setFetchStage('initial');
     metricsMapRef.current.clear();
     lastTimestampRef.current = null;
+    totalAvailableRef.current = 0;
+    initialFetchDoneRef.current = false;
     setAllMetrics([]);
   }, [targetContainerIds.join(','), timeRange.from.valueOf(), timeRange.to.valueOf()]);
 
   // Merge new metrics with existing, deduplicating by containerId+timestamp
+  // Note: No dependencies - uses refs and sets all metrics, filtering happens in useMemo
   const mergeMetrics = useCallback((newMetrics: ContainerMetrics[]) => {
     const map = metricsMapRef.current;
     let maxTimestamp = lastTimestampRef.current;
@@ -612,13 +608,9 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
 
     lastTimestampRef.current = maxTimestamp;
 
-    // Convert map to array, filtered by target containers
-    const result = Array.from(map.values()).filter(m =>
-      targetContainerIds.includes(m.containerId)
-    );
-
-    setAllMetrics(result);
-  }, [targetContainerIds]);
+    // Set all metrics - filtering by target containers happens in containersByHost useMemo
+    setAllMetrics(Array.from(map.values()));
+  }, []);
 
   // Build URL with query parameters for metrics fetch
   const buildMetricsUrl = useCallback((
@@ -650,7 +642,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     return `${hostUrl}/api/metrics?${params.toString()}`;
   }, []);
 
-  // Progressive metrics fetching
+  // Simple metrics fetching - initial full fetch, then incremental updates
   useEffect(() => {
     if (enabledHosts.length === 0) {
       setError('No agents configured. Add Docker Metrics Agents in panel options.');
@@ -665,37 +657,23 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     }
 
     setError(null);
+    let isCancelled = false;
 
-    const fetchMetricsProgressive = async () => {
-      const from = timeRange.from.toISOString();
+    const fetchAllMetrics = async (isIncremental: boolean) => {
+      if (isCancelled) return;
+
+      const from = isIncremental && lastTimestampRef.current
+        ? lastTimestampRef.current
+        : timeRange.from.toISOString();
       const to = timeRange.to.toISOString();
 
-      // Determine fetch parameters based on current stage
-      let limit: number | undefined;
-      let latest = false;
-      let fetchFrom = from;
-
-      switch (fetchStage) {
-        case 'initial':
-          latest = true;
-          setLoading(true);
-          break;
-        case 'recent':
-          limit = FETCH_LIMITS.recent;
-          break;
-        case 'history':
-          limit = FETCH_LIMITS.history;
-          break;
-        case 'complete':
-          // After complete, only fetch incremental updates
-          if (lastTimestampRef.current) {
-            fetchFrom = lastTimestampRef.current;
-          }
-          break;
+      if (!isIncremental) {
+        setLoading(true);
       }
 
       try {
         const newMetrics: ContainerMetrics[] = [];
+        let totalAvailable = 0;
 
         await Promise.all(
           enabledHosts.map(async (host: HostConfig) => {
@@ -704,14 +682,18 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                 host.url,
                 targetContainerIds,
                 selectedFields,
-                fetchFrom,
+                from,
                 to,
-                limit,
-                latest
+                undefined, // no limit - get all data
+                false
               );
 
-              const metrics = await proxyGet<ContainerMetrics[]>(url);
-              for (const metric of metrics) {
+              const response = await proxyGet<MetricsResponse>(url);
+              // Only track totalAvailable from full fetches
+              if (!isIncremental) {
+                totalAvailable += response.metadata.totalAvailable;
+              }
+              for (const metric of response.metrics) {
                 newMetrics.push({
                   ...metric,
                   hostId: host.id,
@@ -724,45 +706,52 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           })
         );
 
-        mergeMetrics(newMetrics);
-        setStatusOverrides(new Map());
+        if (isCancelled) return;
 
-        // Progress to next stage
-        if (fetchStage === 'initial') {
+        // Only update totalAvailable from full fetches
+        if (!isIncremental) {
+          totalAvailableRef.current = totalAvailable;
           setLoading(false);
-          setFetchStage('recent');
-        } else if (fetchStage === 'recent') {
-          setFetchStage('history');
-        } else if (fetchStage === 'history') {
-          setFetchStage('complete');
+          initialFetchDoneRef.current = true;
         }
-        // 'complete' stage stays in complete for incremental updates
+
+        if (newMetrics.length > 0) {
+          mergeMetrics(newMetrics);
+        }
 
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to fetch metrics');
-        setLoading(false);
+        if (!isCancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to fetch metrics');
+          setLoading(false);
+        }
       }
     };
 
-    // Initial fetch immediately
-    fetchMetricsProgressive();
+    // Initial full fetch
+    fetchAllMetrics(false);
 
     // Set up interval for incremental updates
     const refreshInterval = (options.refreshInterval || 10) * 1000;
-    const interval = setInterval(fetchMetricsProgressive, refreshInterval);
+    const interval = setInterval(() => {
+      if (initialFetchDoneRef.current) {
+        fetchAllMetrics(true);
+      }
+    }, refreshInterval);
 
-    return () => clearInterval(interval);
+    return () => {
+      isCancelled = true;
+      clearInterval(interval);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    enabledHosts,
-    targetContainerIds,
+    // Use stable string keys instead of object references to prevent re-runs
+    enabledHosts.map(h => h.id + h.url).join(','),
+    targetContainerIds.join(','),
     options.showAllContainers,
     options.refreshInterval,
-    selectedFields,
-    fetchStage,
+    selectedFields.join(','),
     timeRange.from.valueOf(),
     timeRange.to.valueOf(),
-    buildMetricsUrl,
-    mergeMetrics,
   ]);
 
   // Build host URL lookup
@@ -963,7 +952,10 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           {totalContainers} container{totalContainers !== 1 ? 's' : ''}
         </span>
         <span>{selectedMetricDefs.length} metrics</span>
-        <span>{allMetrics.length} samples</span>
+        <span>
+          {allMetrics.length}{totalAvailableRef.current > 0 ? `/${totalAvailableRef.current}` : ''} samples
+          {initialFetchDoneRef.current ? ' ✓' : ''}
+        </span>
       </div>
 
       {containersByHost.map((host) => (

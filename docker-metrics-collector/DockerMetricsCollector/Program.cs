@@ -30,7 +30,7 @@ var app = builder.Build();
 // Enable CORS
 app.UseCors();
 
-const string AgentVersion = "1.2.1";
+const string AgentVersion = "1.2.7";
 
 // =====================
 // Health & Info Endpoints
@@ -105,7 +105,7 @@ app.MapGet("/api/metrics", (
         containerIdList = new[] { containerId };
     }
 
-    var metrics = cache.GetMetrics(containerIdList, from, to, limit, latest ?? false).ToList();
+    var result = cache.GetMetrics(containerIdList, from, to, limit, latest ?? false);
 
     // If fields filter specified, project to only those fields
     if (!string.IsNullOrEmpty(fields))
@@ -121,11 +121,31 @@ app.MapGet("/api/metrics", (
         fieldSet.Add("isrunning");
         fieldSet.Add("ispaused");
 
-        var projected = metrics.Select(m => ProjectFields(m, fieldSet)).ToList();
-        return Results.Ok(projected);
+        var projected = result.Metrics.Select(m => ProjectFields(m, fieldSet)).ToList();
+        return Results.Ok(new
+        {
+            metrics = projected,
+            metadata = new
+            {
+                totalAvailable = result.TotalAvailable,
+                availablePerContainer = result.AvailablePerContainer,
+                limitApplied = result.LimitApplied,
+                timestamp = DateTimeOffset.UtcNow
+            }
+        });
     }
 
-    return Results.Ok(metrics);
+    return Results.Ok(new
+    {
+        metrics = result.Metrics,
+        metadata = new
+        {
+            totalAvailable = result.TotalAvailable,
+            availablePerContainer = result.AvailablePerContainer,
+            limitApplied = result.LimitApplied,
+            timestamp = DateTimeOffset.UtcNow
+        }
+    });
 });
 
 // Helper to project only selected fields
