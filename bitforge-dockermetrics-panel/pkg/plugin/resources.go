@@ -36,9 +36,10 @@ func (p *Plugin) handleResource(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 
 	switch {
-	case strings.HasPrefix(path, "proxy/"):
+	case path == "proxy" || strings.HasPrefix(path, "proxy/"):
 		p.handleProxy(w, r, strings.TrimPrefix(path, "proxy/"))
 	default:
+		p.Logger().Error("Unknown resource path", "path", path, "url", r.URL.String())
 		http.Error(w, "Not found", http.StatusNotFound)
 	}
 }
