@@ -6,8 +6,10 @@ import { proxyGet } from '../utils/proxy';
 interface ContainerSelectorProps {
   hosts: HostConfig[];
   selectedContainerIds: string[];
+  blacklistedContainerIds: string[];
   showAllContainers: boolean;
   onSelectionChange: (containerIds: string[]) => void;
+  onBlacklistChange: (containerIds: string[]) => void;
   onShowAllChange: (showAll: boolean) => void;
 }
 
@@ -148,8 +150,10 @@ const styles = {
 export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
   hosts,
   selectedContainerIds,
+  blacklistedContainerIds,
   showAllContainers,
   onSelectionChange,
+  onBlacklistChange,
   onShowAllChange,
 }) => {
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
@@ -223,25 +227,42 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
   }, {} as Record<string, ContainerInfo[]>);
 
   const toggleContainer = (containerId: string) => {
-    if (showAllContainers) return;
-
-    const newSelection = selectedContainerIds.includes(containerId)
-      ? selectedContainerIds.filter((id) => id !== containerId)
-      : [...selectedContainerIds, containerId];
-    onSelectionChange(newSelection);
+    if (showAllContainers) {
+      // In "show all" mode, toggle blacklist
+      const newBlacklist = blacklistedContainerIds.includes(containerId)
+        ? blacklistedContainerIds.filter((id) => id !== containerId)
+        : [...blacklistedContainerIds, containerId];
+      onBlacklistChange(newBlacklist);
+    } else {
+      // In whitelist mode, toggle selection
+      const newSelection = selectedContainerIds.includes(containerId)
+        ? selectedContainerIds.filter((id) => id !== containerId)
+        : [...selectedContainerIds, containerId];
+      onSelectionChange(newSelection);
+    }
   };
 
   const selectAllInHost = (hostContainers: ContainerInfo[]) => {
-    if (showAllContainers) return;
-
     const hostContainerIds = hostContainers.map((c) => c.containerId);
-    const allSelected = hostContainerIds.every((id) => selectedContainerIds.includes(id));
 
-    if (allSelected) {
-      onSelectionChange(selectedContainerIds.filter((id) => !hostContainerIds.includes(id)));
+    if (showAllContainers) {
+      // In "show all" mode, toggle blacklist for all in host
+      const allBlacklisted = hostContainerIds.every((id) => blacklistedContainerIds.includes(id));
+      if (allBlacklisted) {
+        onBlacklistChange(blacklistedContainerIds.filter((id) => !hostContainerIds.includes(id)));
+      } else {
+        const newBlacklist = [...new Set([...blacklistedContainerIds, ...hostContainerIds])];
+        onBlacklistChange(newBlacklist);
+      }
     } else {
-      const newSelection = [...new Set([...selectedContainerIds, ...hostContainerIds])];
-      onSelectionChange(newSelection);
+      // In whitelist mode
+      const allSelected = hostContainerIds.every((id) => selectedContainerIds.includes(id));
+      if (allSelected) {
+        onSelectionChange(selectedContainerIds.filter((id) => !hostContainerIds.includes(id)));
+      } else {
+        const newSelection = [...new Set([...selectedContainerIds, ...hostContainerIds])];
+        onSelectionChange(newSelection);
+      }
     }
   };
 
@@ -266,19 +287,19 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
         <span className={styles.allContainersDescription}>Auto-include new containers</span>
       </div>
 
-      {!showAllContainers && (
-        <div className={styles.selectedCount}>
-          {selectedContainerIds.length} container{selectedContainerIds.length !== 1 ? 's' : ''} selected
-        </div>
-      )}
+      <div className={styles.selectedCount}>
+        {showAllContainers
+          ? `${blacklistedContainerIds.length} container${blacklistedContainerIds.length !== 1 ? 's' : ''} excluded`
+          : `${selectedContainerIds.length} container${selectedContainerIds.length !== 1 ? 's' : ''} selected`
+        }
+      </div>
 
       <input
         className={styles.search}
         type="text"
-        placeholder="Search containers..."
+        placeholder={showAllContainers ? "Search to exclude containers..." : "Search containers..."}
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        disabled={showAllContainers}
       />
 
       {error && <div className={styles.error}>{error}</div>}
@@ -294,39 +315,39 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
       <div className={styles.containerList}>
         {Object.entries(containersByHost).map(([hostKey, hostContainers]) => {
           const [, hostName] = hostKey.split(':');
-          const allHostSelected = hostContainers.every((c) =>
-            selectedContainerIds.includes(c.containerId)
-          );
+          const allHostSelected = showAllContainers
+            ? hostContainers.every((c) => blacklistedContainerIds.includes(c.containerId))
+            : hostContainers.every((c) => selectedContainerIds.includes(c.containerId));
           return (
             <div key={hostKey} className={styles.hostGroup}>
               <div className={styles.hostHeader}>
                 <span className={styles.hostName}>
                   {hostName} ({hostContainers.length})
                 </span>
-                {!showAllContainers && (
-                  <span
-                    className={styles.selectAllHost}
-                    onClick={() => selectAllInHost(hostContainers)}
-                  >
-                    {allHostSelected ? 'Deselect all' : 'Select all'}
-                  </span>
-                )}
+                <span
+                  className={styles.selectAllHost}
+                  onClick={() => selectAllInHost(hostContainers)}
+                >
+                  {showAllContainers
+                    ? (allHostSelected ? 'Include all' : 'Exclude all')
+                    : (allHostSelected ? 'Deselect all' : 'Select all')
+                  }
+                </span>
               </div>
               {hostContainers.map((container) => {
                 const isSelected = selectedContainerIds.includes(container.containerId);
+                const isBlacklisted = blacklistedContainerIds.includes(container.containerId);
+                const isChecked = showAllContainers ? !isBlacklisted : isSelected;
                 return (
                   <div
                     key={container.containerId}
-                    className={`${styles.containerItem} ${
-                      isSelected || showAllContainers ? styles.containerItemSelected : ''
-                    } ${showAllContainers ? styles.containerItemDisabled : ''}`}
+                    className={`${styles.containerItem} ${isChecked ? styles.containerItemSelected : ''}`}
                     onClick={() => toggleContainer(container.containerId)}
                   >
                     <input
                       type="checkbox"
                       className={styles.checkbox}
-                      checked={isSelected || showAllContainers}
-                      disabled={showAllContainers}
+                      checked={isChecked}
                       onChange={() => toggleContainer(container.containerId)}
                       onClick={(e) => e.stopPropagation()}
                     />

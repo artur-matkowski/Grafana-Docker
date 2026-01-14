@@ -14,12 +14,20 @@ export const ContainerSelectorEditor: React.FC<StandardEditorProps<string[], any
     }
   };
 
+  const handleBlacklistChange = (containerIds: string[]) => {
+    if (context.options && typeof (context as any).onOptionsChange === 'function') {
+      (context as any).onOptionsChange({ ...context.options, containerBlacklist: containerIds });
+    }
+  };
+
   return (
     <ContainerSelector
       hosts={context.options?.hosts || DEFAULT_HOSTS}
       selectedContainerIds={value || []}
+      blacklistedContainerIds={context.options?.containerBlacklist || []}
       showAllContainers={context.options?.showAllContainers || false}
       onSelectionChange={(containerIds) => onChange(containerIds)}
+      onBlacklistChange={handleBlacklistChange}
       onShowAllChange={handleShowAllChange}
     />
   );
