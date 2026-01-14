@@ -36,6 +36,7 @@ check_prerequisites() {
     command -v docker &>/dev/null || missing+=("docker")
     command -v npm &>/dev/null || missing+=("npm")
     command -v git &>/dev/null || missing+=("git")
+    command -v go &>/dev/null || missing+=("go (for backend plugin)")
 
     # gh is only required when pushing releases
     if [ "$skip_push" != "true" ]; then
@@ -123,13 +124,51 @@ build_plugin() {
 
     cd "${SCRIPT_DIR}/bitforge-dockermetrics-panel"
 
-    # Install dependencies if needed
+    # Install npm dependencies if needed
     if [ ! -d "node_modules" ]; then
         npm install >&2
     fi
 
-    # Build (redirect to stderr so it doesn't interfere with return value)
+    # Build frontend
     npm run build >&2
+
+    # Build Go backend for multiple platforms
+    log_info "Building backend binaries..."
+
+    # Download Go dependencies
+    go mod tidy >&2
+
+    # Build for linux/amd64 (most common for Grafana servers)
+    log_info "Building for linux/amd64..."
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" \
+        -o dist/gpx_bitforge_dockermetrics_panel_linux_amd64 \
+        ./pkg >&2
+
+    # Build for linux/arm64 (Raspberry Pi, ARM servers)
+    log_info "Building for linux/arm64..."
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-w -s" \
+        -o dist/gpx_bitforge_dockermetrics_panel_linux_arm64 \
+        ./pkg >&2
+
+    # Build for darwin/amd64 (Mac Intel - for development)
+    log_info "Building for darwin/amd64..."
+    CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-w -s" \
+        -o dist/gpx_bitforge_dockermetrics_panel_darwin_amd64 \
+        ./pkg >&2
+
+    # Build for darwin/arm64 (Mac M1/M2 - for development)
+    log_info "Building for darwin/arm64..."
+    CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-w -s" \
+        -o dist/gpx_bitforge_dockermetrics_panel_darwin_arm64 \
+        ./pkg >&2
+
+    # Build for windows/amd64 (for development)
+    log_info "Building for windows/amd64..."
+    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-w -s" \
+        -o dist/gpx_bitforge_dockermetrics_panel_windows_amd64.exe \
+        ./pkg >&2
+
+    log_success "Backend binaries built"
 
     # Create tar.gz
     local tar_name="bitforge-dockermetrics-panel-${version}.tar.gz"
@@ -139,7 +178,9 @@ build_plugin() {
 
     # Create archive with proper structure for Grafana
     cd dist
-    tar -czvf "${tar_path}" . >&2
+    tar -czvf "${tar_path}" \
+        --exclude="*.tar.gz" \
+        . >&2
     cd ..
 
     log_success "Plugin built: ${tar_path}"

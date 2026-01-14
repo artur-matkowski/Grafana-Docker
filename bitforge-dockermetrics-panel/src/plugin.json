@@ -3,9 +3,11 @@
   "type": "panel",
   "name": "Docker Metrics Panel",
   "id": "bitforge-dockermetrics-panel",
+  "backend": true,
+  "executable": "gpx_bitforge_dockermetrics_panel",
   "info": {
-    "keywords": ["panel"],
-    "description": "",
+    "keywords": ["panel", "docker", "metrics", "containers"],
+    "description": "Monitor Docker containers with real-time metrics and controls",
     "author": {
       "name": "Bit forge"
     },
