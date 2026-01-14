@@ -4,7 +4,7 @@ set -e
 # Docker Metrics Agent Deployment Script
 # Usage: ./deploy.sh [GITHUB_USER] [VERSION]
 
-GITHUB_USER="${1:-your-username}"
+GITHUB_USER="${1:-artur-matkowski}"
 VERSION="${2:-latest}"
 IMAGE="ghcr.io/${GITHUB_USER}/docker-metrics-agent:${VERSION}"
 CONTAINER_NAME="docker-metrics-agent"

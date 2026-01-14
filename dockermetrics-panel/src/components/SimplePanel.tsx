@@ -350,13 +350,15 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
         const response = await fetch(`${hostUrl}/api/containers/${containerId}/status`);
         if (response.ok) {
           const status: ContainerStatus = await response.json();
-          onStatusUpdate?.(status);
 
-          // Check if actual status matches expected
+          // Only update status when it matches expected state
+          // This ensures the pending state stays visible until action is confirmed
           if (status.isRunning === expectedRunning && status.isPaused === expectedPaused) {
+            onStatusUpdate?.(status);
             onPendingComplete(containerId);
             return;
           }
+          // Don't update status for intermediate states - let pending state show
         }
       } catch {
         // Ignore polling errors
@@ -364,7 +366,7 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
       await new Promise(resolve => setTimeout(resolve, 500));
     }
 
-    // Timeout reached - clear pending state anyway
+    // Timeout reached - clear pending state, let normal metrics refresh handle status
     onPendingComplete(containerId);
   }, [hostUrl, containerId, getExpectedState, onStatusUpdate, onPendingComplete]);
 

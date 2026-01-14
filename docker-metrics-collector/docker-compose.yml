@@ -1,6 +1,6 @@
 services:
   docker-metrics-agent:
-    image: ghcr.io/${GITHUB_USER:-your-username}/docker-metrics-agent:${VERSION:-latest}
+    image: ghcr.io/artur-matkowski/docker-metrics-agent:${VERSION:-v1.0.0}
     build:
       context: .
       dockerfile: Dockerfile
