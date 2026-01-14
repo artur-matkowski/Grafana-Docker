@@ -1,9 +1,16 @@
+# Docker Metrics Agent - Homelab Deployment
+# Deploy this on each node you want to monitor
+#
+# Usage:
+#   docker compose -f docker-compose.agent.yml up -d
+#
+# Environment variables (optional):
+#   PORT - API port (default: 5000)
+#   VERSION - Image version (default: v1.0.0)
+
 services:
   docker-metrics-agent:
     image: ghcr.io/artur-matkowski/docker-metrics-agent:${VERSION:-v1.0.0}
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: docker-metrics-agent
     restart: unless-stopped
     ports:
@@ -11,12 +18,11 @@ services:
     volumes:
       # Docker socket for container metrics
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      # Cgroup filesystem for PSI metrics (read-only)
+      # Cgroup filesystem for PSI metrics (Linux only)
       - /sys/fs/cgroup:/sys/fs/cgroup:ro
     environment:
       - PORT=5000
-      - HOSTNAME=${HOSTNAME:-}
-    # Run with docker group permissions
+    # Docker group permissions - find your docker GID with: getent group docker | cut -d: -f3
     group_add:
       - ${DOCKER_GID:-999}
     healthcheck:
