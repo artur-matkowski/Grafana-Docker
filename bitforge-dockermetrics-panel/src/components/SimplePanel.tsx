@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { PanelProps } from '@grafana/data';
-import { SimpleOptions, ContainerMetrics, ContainerInfo, ContainerStatus, HostConfig, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DEFAULT_HOSTS } from 'types';
+import { SimpleOptions, ContainerMetrics, ContainerInfo, ContainerStatus, HostConfig, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DEFAULT_HOSTS, ContainerAction, PendingAction, PENDING_ACTION_LABELS } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 
@@ -299,15 +299,15 @@ function calculateRates(
   return rates;
 }
 
-// Container control actions
-type ContainerAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause';
-
 interface ContainerControlsProps {
   hostUrl: string;
   containerId: string;
   isRunning: boolean;
   isPaused: boolean;
   styles: ReturnType<typeof getStyles>;
+  pendingAction: PendingAction | null;
+  onPendingStart: (containerId: string, action: ContainerAction) => void;
+  onPendingComplete: (containerId: string) => void;
   onStatusUpdate?: (status: ContainerStatus) => void;
 }
 
@@ -317,19 +317,44 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
   isRunning,
   isPaused,
   styles,
+  pendingAction,
+  onPendingStart,
+  onPendingComplete,
   onStatusUpdate,
 }) => {
-  const [loading, setLoading] = useState<ContainerAction | null>(null);
+  // Helper to get expected state for an action
+  const getExpectedState = useCallback((action: ContainerAction): { expectedRunning: boolean; expectedPaused: boolean } => {
+    switch (action) {
+      case 'start':
+        return { expectedRunning: true, expectedPaused: false };
+      case 'stop':
+        return { expectedRunning: false, expectedPaused: false };
+      case 'restart':
+        return { expectedRunning: true, expectedPaused: false };
+      case 'pause':
+        return { expectedRunning: true, expectedPaused: true };
+      case 'unpause':
+        return { expectedRunning: true, expectedPaused: false };
+      default:
+        return { expectedRunning: isRunning, expectedPaused: isPaused };
+    }
+  }, [isRunning, isPaused]);
 
-  const pollForStatus = useCallback(async (expectedRunning: boolean, expectedPaused: boolean) => {
-    const maxAttempts = 20;
+  // Poll for status and check if it matches expected state
+  const pollForStatus = useCallback(async (action: ContainerAction) => {
+    const { expectedRunning, expectedPaused } = getExpectedState(action);
+    const maxAttempts = 30; // 15 seconds at 500ms intervals
+
     for (let i = 0; i < maxAttempts; i++) {
       try {
         const response = await fetch(`${hostUrl}/api/containers/${containerId}/status`);
         if (response.ok) {
           const status: ContainerStatus = await response.json();
           onStatusUpdate?.(status);
+
+          // Check if actual status matches expected
           if (status.isRunning === expectedRunning && status.isPaused === expectedPaused) {
+            onPendingComplete(containerId);
             return;
           }
         }
@@ -338,10 +363,15 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
       }
       await new Promise(resolve => setTimeout(resolve, 500));
     }
-  }, [hostUrl, containerId, onStatusUpdate]);
+
+    // Timeout reached - clear pending state anyway
+    onPendingComplete(containerId);
+  }, [hostUrl, containerId, getExpectedState, onStatusUpdate, onPendingComplete]);
 
   const executeAction = async (action: ContainerAction) => {
-    setLoading(action);
+    // Set pending state before API call
+    onPendingStart(containerId, action);
+
     try {
       const response = await fetch(`${hostUrl}/api/containers/${containerId}/${action}`, {
         method: 'POST',
@@ -349,39 +379,21 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
       if (!response.ok) {
         const data = await response.json();
         console.error(`Failed to ${action} container:`, data.error);
+        // Clear pending on error
+        onPendingComplete(containerId);
       } else {
-        let expectedRunning = isRunning;
-        let expectedPaused = isPaused;
-        switch (action) {
-          case 'start':
-            expectedRunning = true;
-            expectedPaused = false;
-            break;
-          case 'stop':
-            expectedRunning = false;
-            expectedPaused = false;
-            break;
-          case 'restart':
-            expectedRunning = true;
-            expectedPaused = false;
-            break;
-          case 'pause':
-            expectedRunning = true;
-            expectedPaused = true;
-            break;
-          case 'unpause':
-            expectedRunning = true;
-            expectedPaused = false;
-            break;
-        }
-        pollForStatus(expectedRunning, expectedPaused);
+        // Start polling for expected state
+        pollForStatus(action);
       }
     } catch (err) {
       console.error(`Failed to ${action} container:`, err);
-    } finally {
-      setLoading(null);
+      // Clear pending on error
+      onPendingComplete(containerId);
     }
   };
+
+  // Check if any action is pending
+  const isActionPending = pendingAction !== null;
 
   return (
     <div className={styles.controlsRow}>
@@ -389,46 +401,46 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
         <button
           className={`${styles.controlButton} ${styles.controlButtonStart}`}
           onClick={() => executeAction('start')}
-          disabled={loading !== null}
+          disabled={isActionPending}
           title="Start container"
         >
-          {loading === 'start' ? '...' : '▶ Start'}
+          {pendingAction?.action === 'start' ? '...' : '▶ Start'}
         </button>
       ) : (
         <button
           className={`${styles.controlButton} ${styles.controlButtonStop}`}
           onClick={() => executeAction('stop')}
-          disabled={loading !== null}
+          disabled={isActionPending}
           title="Stop container"
         >
-          {loading === 'stop' ? '...' : '■ Stop'}
+          {pendingAction?.action === 'stop' ? '...' : '■ Stop'}
         </button>
       )}
       <button
         className={`${styles.controlButton} ${styles.controlButtonRestart}`}
         onClick={() => executeAction('restart')}
-        disabled={loading !== null || !isRunning}
+        disabled={isActionPending || !isRunning}
         title="Restart container"
       >
-        {loading === 'restart' ? '...' : '↻ Restart'}
+        {pendingAction?.action === 'restart' ? '...' : '↻ Restart'}
       </button>
       {isPaused ? (
         <button
           className={`${styles.controlButton} ${styles.controlButtonStart}`}
           onClick={() => executeAction('unpause')}
-          disabled={loading !== null}
+          disabled={isActionPending}
           title="Unpause container"
         >
-          {loading === 'unpause' ? '...' : '▶ Unpause'}
+          {pendingAction?.action === 'unpause' ? '...' : '▶ Unpause'}
         </button>
       ) : (
         <button
           className={`${styles.controlButton} ${styles.controlButtonPause}`}
           onClick={() => executeAction('pause')}
-          disabled={loading !== null || !isRunning}
+          disabled={isActionPending || !isRunning}
           title="Pause container"
         >
-          {loading === 'pause' ? '...' : '⏸ Pause'}
+          {pendingAction?.action === 'pause' ? '...' : '⏸ Pause'}
         </button>
       )}
     </div>
@@ -436,7 +448,7 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
 };
 
 export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange }) => {
-  const hosts = options.hosts || DEFAULT_HOSTS;
+  const hosts = useMemo(() => options.hosts || DEFAULT_HOSTS, [options.hosts]);
   const enabledHosts = useMemo(() => hosts.filter((h: HostConfig) => h.enabled), [hosts]);
   const containersPerRow = options.containersPerRow || 0;
   const metricsPerRow = options.metricsPerRow || 0;
@@ -462,10 +474,29 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   // Track real-time status overrides (from control actions)
   const [statusOverrides, setStatusOverrides] = useState<Map<string, ContainerStatus>>(new Map());
 
+  // Track pending actions per container
+  const [pendingActions, setPendingActions] = useState<Map<string, PendingAction>>(new Map());
+
   const handleStatusUpdate = useCallback((status: ContainerStatus) => {
     setStatusOverrides(prev => {
       const next = new Map(prev);
       next.set(status.containerId, status);
+      return next;
+    });
+  }, []);
+
+  const handlePendingStart = useCallback((containerId: string, action: ContainerAction) => {
+    setPendingActions(prev => {
+      const next = new Map(prev);
+      next.set(containerId, { action, startTime: Date.now() });
+      return next;
+    });
+  }, []);
+
+  const handlePendingComplete = useCallback((containerId: string) => {
+    setPendingActions(prev => {
+      const next = new Map(prev);
+      next.delete(containerId);
       return next;
     });
   }, []);
@@ -490,7 +521,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           enabledHosts.map(async (host: HostConfig) => {
             try {
               const response = await fetch(`${host.url}/api/containers?all=true`, {
-                signal: AbortSignal.timeout(5000),
+                signal: AbortSignal.timeout(15000), // 15s timeout for slow Docker Desktop/WSL setups
               });
               if (response.ok) {
                 const data = await response.json();
@@ -555,15 +586,15 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
               // Fetch metrics from each host
               const url = `${host.url}/api/metrics?from=${from}&to=${to}`;
               const response = await fetch(url, {
-                signal: AbortSignal.timeout(10000),
+                signal: AbortSignal.timeout(15000), // 15s for slow Docker Desktop/WSL
               });
 
               if (response.ok) {
                 const metrics: ContainerMetrics[] = await response.json();
                 // Add host info to each metric
                 for (const metric of metrics) {
-                  // Filter by selected containers if not showing all
-                  if (options.showAllContainers || targetContainerIds.includes(metric.containerId)) {
+                  // Always filter by current container IDs to avoid showing stale/removed containers
+                  if (targetContainerIds.includes(metric.containerId)) {
                     allFetchedMetrics.push({
                       ...metric,
                       hostId: host.id,
@@ -623,22 +654,12 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     }
 
     for (const m of allMetrics) {
-      let container = byContainer.get(m.containerId);
-      if (!container) {
-        container = {
-          containerId: m.containerId,
-          containerName: m.containerName,
-          hostId: m.hostId,
-          hostName: m.hostName,
-          hostUrl: hostUrlMap.get(m.hostId) || '',
-          metrics: [],
-          latest: null,
-          rateData: new Map(),
-          latestRates: new Map(),
-        };
-        byContainer.set(m.containerId, container);
+      // Only add metrics to containers that exist in the current containers list
+      // This prevents phantom containers from stale metrics cache
+      const container = byContainer.get(m.containerId);
+      if (container) {
+        container.metrics.push(m);
       }
-      container.metrics.push(m);
     }
 
     // Sort metrics and calculate rates
@@ -820,6 +841,26 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
               const statusOverride = statusOverrides.get(container.containerId);
               const isRunning = statusOverride?.isRunning ?? container.latest?.isRunning ?? false;
               const isPaused = statusOverride?.isPaused ?? container.latest?.isPaused ?? false;
+              const pendingAction = pendingActions.get(container.containerId) || null;
+
+              // Determine status display - pending action takes precedence
+              const getStatusDisplay = () => {
+                if (pendingAction) {
+                  return {
+                    label: `⏳ ${PENDING_ACTION_LABELS[pendingAction.action]}`,
+                    color: '#FF9830', // amber for pending
+                  };
+                }
+                if (isPaused) {
+                  return { label: '● Paused', color: '#FF9830' };
+                }
+                if (isRunning) {
+                  return { label: '● Running', color: '#73BF69' };
+                }
+                return { label: '● Stopped', color: '#FF5555' };
+              };
+
+              const statusDisplay = getStatusDisplay();
 
               return (
               <div key={container.containerId} className={styles.containerCard}>
@@ -829,19 +870,9 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                   </span>
                   <span
                     className={styles.containerStatus}
-                    style={{
-                      color: isPaused
-                        ? '#FF9830'
-                        : isRunning
-                          ? '#73BF69'
-                          : '#FF5555',
-                    }}
+                    style={{ color: statusDisplay.color }}
                   >
-                    {isPaused
-                      ? '● Paused'
-                      : isRunning
-                        ? '● Running'
-                        : '● Stopped'}
+                    {statusDisplay.label}
                   </span>
                 </div>
 
@@ -856,6 +887,9 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                     isRunning={isRunning}
                     isPaused={isPaused}
                     styles={styles}
+                    pendingAction={pendingAction}
+                    onPendingStart={handlePendingStart}
+                    onPendingComplete={handlePendingComplete}
                     onStatusUpdate={handleStatusUpdate}
                   />
                 )}
