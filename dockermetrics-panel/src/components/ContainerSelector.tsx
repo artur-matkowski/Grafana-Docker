@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { css } from '@emotion/css';
 import { ContainerInfo, HostConfig } from '../types';
 
@@ -156,7 +156,7 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
-  const enabledHosts = hosts.filter((h) => h.enabled);
+  const enabledHosts = useMemo(() => hosts.filter((h) => h.enabled), [hosts]);
 
   // Fetch containers from all enabled hosts
   const fetchContainers = useCallback(async () => {
@@ -175,7 +175,7 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
         enabledHosts.map(async (host) => {
           try {
             const response = await fetch(`${host.url}/api/containers?all=true`, {
-              signal: AbortSignal.timeout(5000),
+              signal: AbortSignal.timeout(15000), // 15s for slow Docker Desktop/WSL
             });
             if (response.ok) {
               const data = await response.json();

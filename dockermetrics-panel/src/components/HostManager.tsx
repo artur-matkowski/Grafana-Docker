@@ -193,7 +193,7 @@ export const HostManager: React.FC<HostManagerProps> = ({ hosts, onHostsChange }
 
         try {
           const response = await fetch(`${host.url}/api/info`, {
-            signal: AbortSignal.timeout(5000)
+            signal: AbortSignal.timeout(15000)
           });
 
           if (response.ok) {
@@ -203,15 +203,8 @@ export const HostManager: React.FC<HostManagerProps> = ({ hosts, onHostsChange }
             status.agentVersion = info.agentVersion;
             status.dockerVersion = info.dockerVersion;
             status.psiSupported = info.psiSupported;
-
-            // Get container count
-            const containersResponse = await fetch(`${host.url}/api/containers`, {
-              signal: AbortSignal.timeout(5000)
-            });
-            if (containersResponse.ok) {
-              const containers = await containersResponse.json();
-              status.containerCount = containers.length;
-            }
+            // Skip container count fetch - too slow on Docker Desktop/WSL
+            // ContainerSelector will show container count instead
           } else {
             status.lastError = `HTTP ${response.status}`;
           }
@@ -228,7 +221,7 @@ export const HostManager: React.FC<HostManagerProps> = ({ hosts, onHostsChange }
 
   useEffect(() => {
     checkHostsHealth();
-    const interval = setInterval(checkHostsHealth, 15000);
+    const interval = setInterval(checkHostsHealth, 60000); // 60s - reduced for slow Docker Desktop/WSL
     return () => clearInterval(interval);
   }, [checkHostsHealth]);
 

@@ -57,6 +57,24 @@ export interface ContainerStatus {
   isPaused: boolean;
 }
 
+// Container control actions
+export type ContainerAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause';
+
+// Pending action state for container controls
+export interface PendingAction {
+  action: ContainerAction;
+  startTime: number;
+}
+
+// Labels for pending action states
+export const PENDING_ACTION_LABELS: Record<ContainerAction, string> = {
+  start: 'Starting...',
+  stop: 'Stopping...',
+  restart: 'Restarting...',
+  pause: 'Pausing...',
+  unpause: 'Resuming...',
+};
+
 // PSI metrics
 export interface PsiMetrics {
   some10: number;
