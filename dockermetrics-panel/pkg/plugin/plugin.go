@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
-	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
 )
 
@@ -19,16 +18,12 @@ type Plugin struct {
 	logger log.Logger
 }
 
-// NewPlugin creates a new plugin instance
-func NewPlugin(ctx context.Context, settings backend.PluginContext) (instancemgmt.Instance, error) {
-	return &Plugin{
-		logger: log.DefaultLogger,
-	}, nil
-}
-
-// Dispose cleans up plugin resources
-func (p *Plugin) Dispose() {
-	// Clean up if needed
+// Logger returns the plugin logger, initializing if needed
+func (p *Plugin) Logger() log.Logger {
+	if p.logger == nil {
+		p.logger = log.DefaultLogger
+	}
+	return p.logger
 }
 
 // CheckHealth handles health checks from Grafana

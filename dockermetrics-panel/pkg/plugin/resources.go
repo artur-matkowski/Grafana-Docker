@@ -29,7 +29,7 @@ var httpClient = &http.Client{
 //   - GET/POST /proxy/* - Proxy requests to Docker agents
 func (p *Plugin) CallResource(ctx context.Context, req *backend.CallResourceRequest, sender backend.CallResourceResponseSender) error {
 	// Use httpadapter for easier request handling
-	return httpadapter.New(p.handleResource).CallResource(ctx, req, sender)
+	return httpadapter.New(http.HandlerFunc(p.handleResource)).CallResource(ctx, req, sender)
 }
 
 func (p *Plugin) handleResource(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +70,7 @@ func (p *Plugin) handleProxy(w http.ResponseWriter, r *http.Request, path string
 	// Create proxy request
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
 	if err != nil {
-		p.logger.Error("Failed to create proxy request", "error", err)
+		p.Logger().Error("Failed to create proxy request", "error", err)
 		http.Error(w, "Failed to create proxy request", http.StatusInternalServerError)
 		return
 	}
@@ -94,7 +94,7 @@ func (p *Plugin) handleProxy(w http.ResponseWriter, r *http.Request, path string
 	// Execute request
 	resp, err := httpClient.Do(proxyReq)
 	if err != nil {
-		p.logger.Error("Proxy request failed", "url", targetURL, "error", err)
+		p.Logger().Error("Proxy request failed", "url", targetURL, "error", err)
 
 		// Return error as JSON
 		w.Header().Set("Content-Type", "application/json")
