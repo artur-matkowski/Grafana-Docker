@@ -3,6 +3,7 @@ import { PanelProps } from '@grafana/data';
 import { SimpleOptions, ContainerMetrics, ContainerInfo, ContainerStatus, HostConfig, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DEFAULT_HOSTS, ContainerAction, PendingAction, PENDING_ACTION_LABELS, FetchStage } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
+import { proxyGet, proxyPost } from '../utils/proxy';
 
 // Map metric keys to API field names
 const METRIC_TO_FIELD: Record<string, string> = {
@@ -373,19 +374,16 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
 
     for (let i = 0; i < maxAttempts; i++) {
       try {
-        const response = await fetch(`${hostUrl}/api/containers/${containerId}/status`);
-        if (response.ok) {
-          const status: ContainerStatus = await response.json();
+        const status = await proxyGet<ContainerStatus>(`${hostUrl}/api/containers/${containerId}/status`);
 
-          // Only update status when it matches expected state
-          // This ensures the pending state stays visible until action is confirmed
-          if (status.isRunning === expectedRunning && status.isPaused === expectedPaused) {
-            onStatusUpdate?.(status);
-            onPendingComplete(containerId);
-            return;
-          }
-          // Don't update status for intermediate states - let pending state show
+        // Only update status when it matches expected state
+        // This ensures the pending state stays visible until action is confirmed
+        if (status.isRunning === expectedRunning && status.isPaused === expectedPaused) {
+          onStatusUpdate?.(status);
+          onPendingComplete(containerId);
+          return;
         }
+        // Don't update status for intermediate states - let pending state show
       } catch {
         // Ignore polling errors
       }
@@ -401,18 +399,9 @@ const ContainerControls: React.FC<ContainerControlsProps> = ({
     onPendingStart(containerId, action);
 
     try {
-      const response = await fetch(`${hostUrl}/api/containers/${containerId}/${action}`, {
-        method: 'POST',
-      });
-      if (!response.ok) {
-        const data = await response.json();
-        console.error(`Failed to ${action} container:`, data.error);
-        // Clear pending on error
-        onPendingComplete(containerId);
-      } else {
-        // Start polling for expected state
-        pollForStatus(action);
-      }
+      await proxyPost(`${hostUrl}/api/containers/${containerId}/${action}`);
+      // Start polling for expected state
+      pollForStatus(action);
     } catch (err) {
       console.error(`Failed to ${action} container:`, err);
       // Clear pending on error
@@ -566,18 +555,13 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
         await Promise.all(
           enabledHosts.map(async (host: HostConfig) => {
             try {
-              const response = await fetch(`${host.url}/api/containers?all=true`, {
-                signal: AbortSignal.timeout(15000),
-              });
-              if (response.ok) {
-                const data = await response.json();
-                for (const container of data) {
-                  allContainers.push({
-                    ...container,
-                    hostId: host.id,
-                    hostName: host.name,
-                  });
-                }
+              const data = await proxyGet<Array<{ containerId: string; containerName: string; state: string; isRunning: boolean; isPaused: boolean }>>(`${host.url}/api/containers?all=true`);
+              for (const container of data) {
+                allContainers.push({
+                  ...container,
+                  hostId: host.id,
+                  hostName: host.name,
+                });
               }
             } catch {
               // Ignore individual host errors
@@ -726,19 +710,13 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                 latest
               );
 
-              const response = await fetch(url, {
-                signal: AbortSignal.timeout(15000),
-              });
-
-              if (response.ok) {
-                const metrics: ContainerMetrics[] = await response.json();
-                for (const metric of metrics) {
-                  newMetrics.push({
-                    ...metric,
-                    hostId: host.id,
-                    hostName: host.name,
-                  });
-                }
+              const metrics = await proxyGet<ContainerMetrics[]>(url);
+              for (const metric of metrics) {
+                newMetrics.push({
+                  ...metric,
+                  hostId: host.id,
+                  hostName: host.name,
+                });
               }
             } catch {
               // Ignore individual host errors
