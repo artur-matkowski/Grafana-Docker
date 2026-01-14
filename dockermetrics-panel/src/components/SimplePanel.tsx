@@ -90,9 +90,41 @@ const getStyles = () => {
     `,
     containerCard: css`
       background: rgba(255, 255, 255, 0.03);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 6px;
       padding: 12px;
+    `,
+    containerCardWarning: css`
+      background: rgba(255, 152, 48, 0.08);
+      border-color: rgba(255, 152, 48, 0.4);
+      animation: pulse-warning 2s ease-in-out infinite;
+
+      @keyframes pulse-warning {
+        0%, 100% {
+          background: rgba(255, 152, 48, 0.08);
+          border-color: rgba(255, 152, 48, 0.4);
+        }
+        50% {
+          background: rgba(255, 152, 48, 0.15);
+          border-color: rgba(255, 152, 48, 0.6);
+        }
+      }
+    `,
+    containerCardStopped: css`
+      background: rgba(242, 73, 92, 0.08);
+      border-color: rgba(242, 73, 92, 0.4);
+      animation: pulse-stopped 2s ease-in-out infinite;
+
+      @keyframes pulse-stopped {
+        0%, 100% {
+          background: rgba(242, 73, 92, 0.08);
+          border-color: rgba(242, 73, 92, 0.4);
+        }
+        50% {
+          background: rgba(242, 73, 92, 0.15);
+          border-color: rgba(242, 73, 92, 0.6);
+        }
+      }
     `,
     containerHeader: css`
       display: flex;
@@ -1108,8 +1140,22 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
 
               const statusDisplay = getStatusDisplay();
 
+              // Determine card style based on container state
+              const getCardClass = () => {
+                if (pendingAction) {
+                  return cx(styles.containerCard, styles.containerCardWarning);
+                }
+                if (isPaused) {
+                  return cx(styles.containerCard, styles.containerCardWarning);
+                }
+                if (!isRunning) {
+                  return cx(styles.containerCard, styles.containerCardStopped);
+                }
+                return styles.containerCard;
+              };
+
               return (
-              <div key={container.containerId} className={styles.containerCard}>
+              <div key={container.containerId} className={getCardClass()}>
                 <div className={styles.containerHeader}>
                   <span className={styles.containerName} title={container.containerName}>
                     {container.containerName.replace(/^\//, '')}
