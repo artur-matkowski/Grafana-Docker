@@ -89,40 +89,40 @@ const getStyles = () => {
       padding: 0 4px;
     `,
     containerCard: css`
-      background: rgba(255, 255, 255, 0.03);
+      background: rgba(115, 191, 105, 0.06);
       border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 6px;
       padding: 12px;
     `,
     containerCardWarning: css`
-      background: rgba(255, 152, 48, 0.08);
-      border-color: rgba(255, 152, 48, 0.4);
-      animation: pulse-warning 2s ease-in-out infinite;
+      background: rgba(255, 152, 48, 0.12);
+      border-color: rgba(255, 152, 48, 0.5);
+      animation: pulse-warning 1s ease-in-out infinite;
 
       @keyframes pulse-warning {
         0%, 100% {
-          background: rgba(255, 152, 48, 0.08);
-          border-color: rgba(255, 152, 48, 0.4);
+          background: rgba(255, 152, 48, 0.06);
+          border-color: rgba(255, 152, 48, 0.3);
         }
         50% {
-          background: rgba(255, 152, 48, 0.15);
-          border-color: rgba(255, 152, 48, 0.6);
+          background: rgba(255, 152, 48, 0.25);
+          border-color: rgba(255, 152, 48, 0.7);
         }
       }
     `,
     containerCardStopped: css`
-      background: rgba(242, 73, 92, 0.08);
-      border-color: rgba(242, 73, 92, 0.4);
-      animation: pulse-stopped 2s ease-in-out infinite;
+      background: rgba(242, 73, 92, 0.12);
+      border-color: rgba(242, 73, 92, 0.5);
+      animation: pulse-stopped 1s ease-in-out infinite;
 
       @keyframes pulse-stopped {
         0%, 100% {
-          background: rgba(242, 73, 92, 0.08);
-          border-color: rgba(242, 73, 92, 0.4);
+          background: rgba(242, 73, 92, 0.06);
+          border-color: rgba(242, 73, 92, 0.3);
         }
         50% {
-          background: rgba(242, 73, 92, 0.15);
-          border-color: rgba(242, 73, 92, 0.6);
+          background: rgba(242, 73, 92, 0.25);
+          border-color: rgba(242, 73, 92, 0.7);
         }
       }
     `,
