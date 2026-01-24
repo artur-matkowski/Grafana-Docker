@@ -143,8 +143,8 @@ build_plugin() {
         exit 1
     fi
 
-    # Build Go backend for multiple platforms
-    log_info "Building backend binaries..."
+    # Build Go backend for production platforms only (linux)
+    log_info "Building backend binaries for production platforms..."
 
     # Download Go dependencies
     go mod tidy >&2
@@ -161,24 +161,6 @@ build_plugin() {
         -o dist/gpx_bitforge_dockermetrics_panel_linux_arm64 \
         ./pkg >&2
 
-    # Build for darwin/amd64 (Mac Intel - for development)
-    log_info "Building for darwin/amd64..."
-    CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-w -s" \
-        -o dist/gpx_bitforge_dockermetrics_panel_darwin_amd64 \
-        ./pkg >&2
-
-    # Build for darwin/arm64 (Mac M1/M2 - for development)
-    log_info "Building for darwin/arm64..."
-    CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-w -s" \
-        -o dist/gpx_bitforge_dockermetrics_panel_darwin_arm64 \
-        ./pkg >&2
-
-    # Build for windows/amd64 (for development)
-    log_info "Building for windows/amd64..."
-    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-w -s" \
-        -o dist/gpx_bitforge_dockermetrics_panel_windows_amd64.exe \
-        ./pkg >&2
-
     # Verify backend build succeeded
     if [ ! -f "dist/gpx_bitforge_dockermetrics_panel_linux_amd64" ]; then
         log_error "Backend build failed: linux_amd64 binary not found"
@@ -187,17 +169,23 @@ build_plugin() {
 
     log_success "Backend binaries built"
 
-    # Create tar.gz
+    # Create tar.gz with only production-essential files
     local tar_name="bitforge-dockermetrics-panel-${version}.tar.gz"
     local tar_path="${SCRIPT_DIR}/dist/${tar_name}"
 
     mkdir -p "${SCRIPT_DIR}/dist"
 
-    # Create archive with proper structure for Grafana
+    # Create archive with only deployable files for Grafana
+    # Excludes: darwin/windows binaries (dev-only), source maps (debugging-only)
     local plugin_dist="${SCRIPT_DIR}/bitforge-dockermetrics-panel/dist"
     cd "${plugin_dist}"
+
+    log_info "Packaging plugin artifact (production files only)..."
     tar -czvf "${tar_path}" \
         --exclude="*.tar.gz" \
+        --exclude="*_darwin_*" \
+        --exclude="*_windows_*" \
+        --exclude="*.map" \
         . >&2
     cd "${SCRIPT_DIR}/bitforge-dockermetrics-panel"
 
