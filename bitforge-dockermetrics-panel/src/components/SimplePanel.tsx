@@ -14,6 +14,25 @@ const log = (area: string, message: string, data?: unknown) => {
   }
 };
 
+// Format uptime seconds to human-readable string (e.g., "2d 5h", "3h 20m", "45m")
+const formatUptime = (seconds: number): string => {
+  if (seconds < 60) {
+    return `${Math.floor(seconds)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours < 24) {
+    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  }
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
+};
+
 // Map metric keys to API field names
 const METRIC_TO_FIELD: Record<string, string> = {
   cpuPercent: 'cpuPercent',
@@ -23,7 +42,6 @@ const METRIC_TO_FIELD: Record<string, string> = {
   networkTxBytes: 'networkTxBytes',
   diskReadBytes: 'diskReadBytes',
   diskWriteBytes: 'diskWriteBytes',
-  uptimeSeconds: 'uptimeSeconds',
   cpuPressureSome: 'cpuPressure',
   cpuPressureFull: 'cpuPressure',
   memoryPressureSome: 'memoryPressure',
@@ -144,6 +162,12 @@ const getStyles = () => {
     containerStatus: css`
       font-size: 11px;
       margin-left: 8px;
+    `,
+    containerUptime: css`
+      font-size: 10px;
+      color: #888;
+      margin-left: auto;
+      padding-left: 8px;
     `,
     metricsGrid: css`
       display: grid;
@@ -1166,6 +1190,11 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                   >
                     {statusDisplay.label}
                   </span>
+                  {container.latest?.uptimeSeconds !== undefined && container.latest.uptimeSeconds > 0 && (
+                    <span className={styles.containerUptime} title="Container uptime">
+                      {formatUptime(container.latest.uptimeSeconds)}
+                    </span>
+                  )}
                 </div>
 
                 <div className={styles.metricsGrid} style={metricsGridStyle}>

@@ -209,14 +209,6 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
     getValue: (s) => s.diskWriteBytes,
     isRate: true,
   },
-  {
-    key: 'uptimeSeconds',
-    label: 'Uptime',
-    unit: 'h',
-    color: '#888888',
-    format: (v) => (v / 3600).toFixed(1),
-    getValue: (s) => s.uptimeSeconds,
-  },
   // PSI CPU metrics
   {
     key: 'cpuPressureSome',

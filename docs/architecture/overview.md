@@ -112,7 +112,7 @@ Grafana-Docker is a distributed Docker container monitoring solution consisting 
 | Memory bytes/% | Docker stats | Memory usage absolute/relative |
 | Network RX/TX | Docker stats | Bytes received/transmitted |
 | Disk Read/Write | Docker stats | Block I/O bytes |
-| Uptime | Container inspect | Seconds since container start |
+| Uptime | Container inspect | Seconds since container start (displayed as static value, not graphed) |
 | PSI CPU/Memory/IO | cgroup v2 | Resource pressure (some/full 10/60/300s) |
 
 ## External Dependencies
