@@ -9,6 +9,7 @@ export interface SimpleOptions {
   metricsPerRow: number;
   enableContainerControls: boolean;
   refreshInterval: number; // Refresh interval in seconds
+  stripMode: boolean;               // Strip mode - hide host headers, show all containers in a single grid
 }
 
 // Progressive fetch stages

@@ -1004,6 +1004,11 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   const totalContainers = containersByHost.reduce((sum, h) => sum + h.containers.length, 0);
   const totalHosts = containersByHost.length;
 
+  // Flatten all containers for strip mode (must be before early returns to satisfy React hooks rules)
+  const allContainersFlat = useMemo(() => {
+    return containersByHost.flatMap(host => host.containers);
+  }, [containersByHost]);
+
   const renderMetric = (container: ContainerWithMetrics, metricDef: MetricDefinition) => {
     const latest = container.latest;
 
@@ -1115,6 +1120,99 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     );
   }
 
+  // Render a single container card (extracted for reuse)
+  const renderContainerCard = (container: ContainerWithMetrics) => {
+    const statusOverride = statusOverrides.get(container.containerId);
+    const isRunning = statusOverride?.isRunning ?? container.latest?.isRunning ?? false;
+    const isPaused = statusOverride?.isPaused ?? container.latest?.isPaused ?? false;
+    const pendingAction = pendingActions.get(container.containerId) || null;
+
+    // Determine status display - pending action takes precedence
+    const getStatusDisplay = () => {
+      if (pendingAction) {
+        return {
+          label: `⏳ ${PENDING_ACTION_LABELS[pendingAction.action]}`,
+          color: '#FF9830', // amber for pending
+        };
+      }
+      if (isPaused) {
+        return { label: '● Paused', color: '#FF9830' };
+      }
+      if (isRunning) {
+        return { label: '● Running', color: '#73BF69' };
+      }
+      return { label: '● Stopped', color: '#FF5555' };
+    };
+
+    const statusDisplay = getStatusDisplay();
+
+    // Determine card style based on container state
+    const getCardClass = () => {
+      if (pendingAction) {
+        return cx(styles.containerCard, styles.containerCardWarning);
+      }
+      if (isPaused) {
+        return cx(styles.containerCard, styles.containerCardWarning);
+      }
+      if (!isRunning) {
+        return cx(styles.containerCard, styles.containerCardStopped);
+      }
+      return styles.containerCard;
+    };
+
+    return (
+      <div key={container.containerId} className={getCardClass()}>
+        <div className={styles.containerHeader}>
+          <span className={styles.containerName} title={container.containerName}>
+            {container.containerName.replace(/^\//, '')}
+          </span>
+          <span
+            className={styles.containerStatus}
+            style={{ color: statusDisplay.color }}
+          >
+            {statusDisplay.label}
+          </span>
+          {container.latest?.uptimeSeconds !== undefined && container.latest.uptimeSeconds > 0 && (
+            <span className={styles.containerUptime} title="Container uptime">
+              {formatUptime(container.latest.uptimeSeconds)}
+            </span>
+          )}
+        </div>
+
+        <div className={styles.metricsGrid} style={metricsGridStyle}>
+          {selectedMetricDefs.map((metricDef) => renderMetric(container, metricDef))}
+        </div>
+
+        {options.enableContainerControls && container.hostUrl && (
+          <ContainerControls
+            hostUrl={container.hostUrl}
+            containerId={container.containerId}
+            isRunning={isRunning}
+            isPaused={isPaused}
+            styles={styles}
+            pendingAction={pendingAction}
+            onPendingStart={handlePendingStart}
+            onPendingComplete={handlePendingComplete}
+            onStatusUpdate={handleStatusUpdate}
+          />
+        )}
+      </div>
+    );
+  };
+
+  // Strip mode: single grid with all containers, no host headers
+  if (options.stripMode) {
+    log('Render', 'Rendering in strip mode', { containerCount: allContainersFlat.length });
+    return (
+      <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
+        <div className={styles.containersGrid} style={containerGridStyle}>
+          {allContainersFlat.map(renderContainerCard)}
+        </div>
+      </div>
+    );
+  }
+
+  // Normal mode: grouped by host with headers
   return (
     <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
       <div className={styles.summary}>
@@ -1142,84 +1240,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           </div>
 
           <div className={styles.containersGrid} style={containerGridStyle}>
-            {host.containers.map((container) => {
-              const statusOverride = statusOverrides.get(container.containerId);
-              const isRunning = statusOverride?.isRunning ?? container.latest?.isRunning ?? false;
-              const isPaused = statusOverride?.isPaused ?? container.latest?.isPaused ?? false;
-              const pendingAction = pendingActions.get(container.containerId) || null;
-
-              // Determine status display - pending action takes precedence
-              const getStatusDisplay = () => {
-                if (pendingAction) {
-                  return {
-                    label: `⏳ ${PENDING_ACTION_LABELS[pendingAction.action]}`,
-                    color: '#FF9830', // amber for pending
-                  };
-                }
-                if (isPaused) {
-                  return { label: '● Paused', color: '#FF9830' };
-                }
-                if (isRunning) {
-                  return { label: '● Running', color: '#73BF69' };
-                }
-                return { label: '● Stopped', color: '#FF5555' };
-              };
-
-              const statusDisplay = getStatusDisplay();
-
-              // Determine card style based on container state
-              const getCardClass = () => {
-                if (pendingAction) {
-                  return cx(styles.containerCard, styles.containerCardWarning);
-                }
-                if (isPaused) {
-                  return cx(styles.containerCard, styles.containerCardWarning);
-                }
-                if (!isRunning) {
-                  return cx(styles.containerCard, styles.containerCardStopped);
-                }
-                return styles.containerCard;
-              };
-
-              return (
-              <div key={container.containerId} className={getCardClass()}>
-                <div className={styles.containerHeader}>
-                  <span className={styles.containerName} title={container.containerName}>
-                    {container.containerName.replace(/^\//, '')}
-                  </span>
-                  <span
-                    className={styles.containerStatus}
-                    style={{ color: statusDisplay.color }}
-                  >
-                    {statusDisplay.label}
-                  </span>
-                  {container.latest?.uptimeSeconds !== undefined && container.latest.uptimeSeconds > 0 && (
-                    <span className={styles.containerUptime} title="Container uptime">
-                      {formatUptime(container.latest.uptimeSeconds)}
-                    </span>
-                  )}
-                </div>
-
-                <div className={styles.metricsGrid} style={metricsGridStyle}>
-                  {selectedMetricDefs.map((metricDef) => renderMetric(container, metricDef))}
-                </div>
-
-                {options.enableContainerControls && container.hostUrl && (
-                  <ContainerControls
-                    hostUrl={container.hostUrl}
-                    containerId={container.containerId}
-                    isRunning={isRunning}
-                    isPaused={isPaused}
-                    styles={styles}
-                    pendingAction={pendingAction}
-                    onPendingStart={handlePendingStart}
-                    onPendingComplete={handlePendingComplete}
-                    onStatusUpdate={handleStatusUpdate}
-                  />
-                )}
-              </div>
-              );
-            })}
+            {host.containers.map(renderContainerCard)}
           </div>
         </div>
       ))}

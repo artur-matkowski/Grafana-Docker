@@ -6,6 +6,7 @@ import { ContainerSelectorEditor } from './components/ContainerSelectorEditor';
 import { MetricSelectorEditor } from './components/MetricSelectorEditor';
 
 export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOptions((builder) => {
+  console.warn('[DockerMetrics:module] setPanelOptions called, registering options...');
   return builder
     .addCustomEditor({
       id: 'hostManager',
@@ -39,6 +40,17 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       category: ['Display'],
       editor: MetricSelectorEditor,
       defaultValue: DEFAULT_METRICS,
+    })
+    .addBooleanSwitch({
+      path: 'stripMode',
+      name: 'Strip Mode',
+      description: 'Hide host headers and show all containers in a single grid (useful for small panels)',
+      defaultValue: false,
+      category: ['Layout'],
+      showIf: (config) => {
+        console.warn('[DockerMetrics:module] stripMode showIf called, config:', config);
+        return true;
+      },
     })
     .addNumberInput({
       path: 'containersPerRow',
