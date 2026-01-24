@@ -50,12 +50,12 @@ export interface DockerMetricsSecureJsonData {
  */
 export const AVAILABLE_METRICS = [
   { value: 'cpuPercent', label: 'CPU %' },
-  { value: 'memoryBytes', label: 'Memory (bytes)' },
+  { value: 'memoryBytes', label: 'Memory (MB)' },
   { value: 'memoryPercent', label: 'Memory %' },
-  { value: 'networkRxBytes', label: 'Network RX (bytes)' },
-  { value: 'networkTxBytes', label: 'Network TX (bytes)' },
-  { value: 'diskReadBytes', label: 'Disk Read (bytes)' },
-  { value: 'diskWriteBytes', label: 'Disk Write (bytes)' },
+  { value: 'networkRxBytes', label: 'Network RX (MB)' },
+  { value: 'networkTxBytes', label: 'Network TX (MB)' },
+  { value: 'diskReadBytes', label: 'Disk Read (MB)' },
+  { value: 'diskWriteBytes', label: 'Disk Write (MB)' },
   { value: 'uptimeSeconds', label: 'Uptime (seconds)' },
   { value: 'cpuPressure', label: 'CPU Pressure (PSI)' },
   { value: 'memoryPressure', label: 'Memory Pressure (PSI)' },
