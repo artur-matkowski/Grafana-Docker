@@ -329,10 +329,42 @@ func (d *Datasource) buildMetricFrames(allMetrics []metricsWithHost, requestedMe
 	return frames
 }
 
+// metricDisplayName maps internal metric names to display names
+var metricDisplayNames = map[string]string{
+	"cpuPercent":      "CPU %",
+	"memoryBytes":     "Memory (MB)",
+	"memoryPercent":   "Memory %",
+	"networkRxBytes":  "Network RX (MB)",
+	"networkTxBytes":  "Network TX (MB)",
+	"diskReadBytes":   "Disk Read (MB)",
+	"diskWriteBytes":  "Disk Write (MB)",
+	"uptimeSeconds":   "Uptime (s)",
+	"cpuPressure":     "CPU Pressure",
+	"memoryPressure":  "Memory Pressure",
+	"ioPressure":      "I/O Pressure",
+}
+
+// metricUnits maps internal metric names to units
+var metricUnits = map[string]string{
+	"cpuPercent":      "percent",
+	"memoryBytes":     "decmbytes",
+	"memoryPercent":   "percent",
+	"networkRxBytes":  "decmbytes",
+	"networkTxBytes":  "decmbytes",
+	"diskReadBytes":   "decmbytes",
+	"diskWriteBytes":  "decmbytes",
+	"uptimeSeconds":   "s",
+	"cpuPressure":     "percent",
+	"memoryPressure":  "percent",
+	"ioPressure":      "percent",
+}
+
 // buildSingleMetricFrame creates a DataFrame for a single metric
 func (d *Datasource) buildSingleMetricFrame(key containerKey, cd *containerData, metricName string) *data.Frame {
 	times := make([]time.Time, 0, len(cd.metrics))
 	values := make([]float64, 0, len(cd.metrics))
+
+	const bytesToMB = 1024.0 * 1024.0
 
 	for _, m := range cd.metrics {
 		t, err := time.Parse(time.RFC3339, m.Timestamp)
@@ -341,23 +373,22 @@ func (d *Datasource) buildSingleMetricFrame(key containerKey, cd *containerData,
 		}
 
 		var value float64
-		const bytesToMB = 1024 * 1024
 
 		switch metricName {
 		case "cpuPercent":
 			value = m.CPUPercent
 		case "memoryBytes":
-			value = m.MemoryBytes / bytesToMB // Convert to MB
+			value = m.MemoryBytes / bytesToMB
 		case "memoryPercent":
 			value = m.MemoryPercent
 		case "networkRxBytes":
-			value = m.NetworkRxBytes / bytesToMB // Convert to MB
+			value = m.NetworkRxBytes / bytesToMB
 		case "networkTxBytes":
-			value = m.NetworkTxBytes / bytesToMB // Convert to MB
+			value = m.NetworkTxBytes / bytesToMB
 		case "diskReadBytes":
-			value = m.DiskReadBytes / bytesToMB // Convert to MB
+			value = m.DiskReadBytes / bytesToMB
 		case "diskWriteBytes":
-			value = m.DiskWriteBytes / bytesToMB // Convert to MB
+			value = m.DiskWriteBytes / bytesToMB
 		case "uptimeSeconds":
 			value = m.UptimeSeconds
 		case "cpuPressure":
@@ -384,15 +415,31 @@ func (d *Datasource) buildSingleMetricFrame(key containerKey, cd *containerData,
 		return nil
 	}
 
-	// Create frame with labels
+	// Get display name and unit
+	displayName := metricDisplayNames[metricName]
+	if displayName == "" {
+		displayName = metricName
+	}
+	unit := metricUnits[metricName]
+
+	// Create value field with proper config
+	valueField := data.NewField(displayName, data.Labels{
+		"containerId":   key.containerID,
+		"containerName": cd.containerName,
+		"hostName":      cd.hostName,
+	}, values)
+
+	// Set field config for proper display in Grafana
+	valueField.Config = &data.FieldConfig{
+		DisplayName: fmt.Sprintf("%s - %s", cd.containerName, displayName),
+		Unit:        unit,
+	}
+
+	// Create frame
 	frame := data.NewFrame(
-		fmt.Sprintf("%s - %s", cd.containerName, metricName),
+		fmt.Sprintf("%s - %s", cd.containerName, displayName),
 		data.NewField("time", nil, times),
-		data.NewField(metricName, data.Labels{
-			"containerId":   key.containerID,
-			"containerName": cd.containerName,
-			"hostName":      cd.hostName,
-		}, values),
+		valueField,
 	)
 
 	return frame
