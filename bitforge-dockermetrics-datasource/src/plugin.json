@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
+  "type": "datasource",
+  "name": "Docker Metrics",
+  "id": "bitforge-dockermetrics-datasource",
+  "backend": true,
+  "executable": "gpx_bitforge_dockermetrics_datasource",
+  "alerting": true,
+  "info": {
+    "keywords": ["datasource", "docker", "metrics", "containers"],
+    "description": "Fetch metrics from Docker containers via Docker Metrics Collector agents",
+    "author": {
+      "name": "Bit forge"
+    },
+    "logos": {
+      "small": "img/logo.svg",
+      "large": "img/logo.svg"
+    },
+    "links": [],
+    "screenshots": [],
+    "version": "%VERSION%",
+    "updated": "%TODAY%"
+  },
+  "dependencies": {
+    "grafanaDependency": ">=11.6.0",
+    "plugins": []
+  },
+  "metrics": true,
+  "annotations": false,
+  "logs": false,
+  "tracing": false
+}
