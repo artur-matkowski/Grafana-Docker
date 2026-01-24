@@ -341,21 +341,23 @@ func (d *Datasource) buildSingleMetricFrame(key containerKey, cd *containerData,
 		}
 
 		var value float64
+		const bytesToMB = 1024 * 1024
+
 		switch metricName {
 		case "cpuPercent":
 			value = m.CPUPercent
 		case "memoryBytes":
-			value = m.MemoryBytes
+			value = m.MemoryBytes / bytesToMB // Convert to MB
 		case "memoryPercent":
 			value = m.MemoryPercent
 		case "networkRxBytes":
-			value = m.NetworkRxBytes
+			value = m.NetworkRxBytes / bytesToMB // Convert to MB
 		case "networkTxBytes":
-			value = m.NetworkTxBytes
+			value = m.NetworkTxBytes / bytesToMB // Convert to MB
 		case "diskReadBytes":
-			value = m.DiskReadBytes
+			value = m.DiskReadBytes / bytesToMB // Convert to MB
 		case "diskWriteBytes":
-			value = m.DiskWriteBytes
+			value = m.DiskWriteBytes / bytesToMB // Convert to MB
 		case "uptimeSeconds":
 			value = m.UptimeSeconds
 		case "cpuPressure":
