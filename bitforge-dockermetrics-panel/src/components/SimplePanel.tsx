@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import { PanelProps } from '@grafana/data';
-import { SimpleOptions, ContainerMetrics, ContainerInfo, ContainerStatus, HostConfig, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DEFAULT_HOSTS, ContainerAction, PendingAction, PENDING_ACTION_LABELS, MetricsResponse } from 'types';
+import { PanelProps, DataQueryRequest, DataFrameView, dateTime } from '@grafana/data';
+import { SimpleOptions, ContainerMetrics, ContainerInfo, ContainerStatus, HostConfig, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DEFAULT_HOSTS, ContainerAction, PendingAction, PENDING_ACTION_LABELS, MetricsResponse, DataSourceConfig } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 import { proxyGet, proxyPost } from '../utils/proxy';
+import { getDataSourceSrv } from '@grafana/runtime';
 
 // Debug logging - set to true when troubleshooting issues
 const DEBUG = false;
@@ -52,6 +53,199 @@ const METRIC_TO_FIELD: Record<string, string> = {
 
 
 interface Props extends PanelProps<SimpleOptions> {}
+
+// Helper to convert Observable or Promise to Promise
+async function toPromise<T>(result: Promise<T> | { toPromise(): Promise<T> }): Promise<T> {
+  if ('toPromise' in result && typeof result.toPromise === 'function') {
+    return result.toPromise();
+  }
+  return result as Promise<T>;
+}
+
+// Fetch metrics via data source query API (for public dashboard support)
+async function fetchMetricsViaDataSource(
+  dataSourceUid: string,
+  metrics: string[],
+  from: Date,
+  to: Date,
+  containerNamePattern?: string
+): Promise<ContainerMetrics[]> {
+  const srv = getDataSourceSrv();
+  const ds = await srv.get(dataSourceUid);
+
+  if (!ds || typeof ds.query !== 'function') {
+    throw new Error('Data source not found or does not support queries');
+  }
+
+  const request: DataQueryRequest = {
+    requestId: `docker-metrics-${Date.now()}`,
+    interval: '10s',
+    intervalMs: 10000,
+    range: {
+      from: dateTime(from),
+      to: dateTime(to),
+      raw: { from: dateTime(from), to: dateTime(to) },
+    },
+    scopedVars: {},
+    targets: [{
+      refId: 'A',
+      queryType: 'metrics',
+      metrics: metrics,
+      containerNamePattern: containerNamePattern || '',
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }] as any,
+    timezone: 'browser',
+    app: 'panel',
+    startTime: Date.now(),
+  };
+
+  const response = await toPromise(ds.query(request));
+
+  if (!response || !response.data) {
+    return [];
+  }
+
+  // Convert DataFrames back to ContainerMetrics format
+  const metricsMap = new Map<string, ContainerMetrics>();
+
+  for (const frame of response.data) {
+    if (!frame.fields || frame.fields.length < 2) {
+      continue;
+    }
+
+    const timeField = frame.fields.find((f: { type: string }) => f.type === 'time');
+    const valueField = frame.fields.find((f: { type: string }) => f.type === 'number');
+
+    if (!timeField || !valueField) {
+      continue;
+    }
+
+    const labels = valueField.labels || {};
+    const containerId = labels.containerId || '';
+    const containerName = labels.containerName || '';
+    const hostName = labels.hostName || 'default';
+
+    // Determine which metric this is based on field name
+    const fieldName = valueField.name || '';
+
+    const view = new DataFrameView(frame);
+    for (let i = 0; i < view.length; i++) {
+      const row = view.get(i);
+      const timestamp = new Date(row[timeField.name]).toISOString();
+      const value = row[valueField.name];
+
+      const key = `${containerId}:${timestamp}`;
+      if (!metricsMap.has(key)) {
+        metricsMap.set(key, {
+          hostId: hostName,
+          hostName: hostName,
+          containerId,
+          containerName,
+          timestamp,
+          cpuPercent: 0,
+          memoryBytes: 0,
+          memoryPercent: 0,
+          networkRxBytes: 0,
+          networkTxBytes: 0,
+          diskReadBytes: 0,
+          diskWriteBytes: 0,
+          uptimeSeconds: 0,
+          isRunning: true,
+          isPaused: false,
+          cpuPressure: null,
+          memoryPressure: null,
+          ioPressure: null,
+        });
+      }
+
+      const metric = metricsMap.get(key)!;
+
+      // Map display names back to metric keys (data source sends display names)
+      if (fieldName.includes('CPU %') || fieldName === 'cpuPercent') {
+        metric.cpuPercent = value;
+      } else if (fieldName.includes('Memory (MB)') || fieldName === 'memoryBytes') {
+        // Convert back to bytes (data source sends MB)
+        metric.memoryBytes = value * 1024 * 1024;
+      } else if (fieldName.includes('Memory %') || fieldName === 'memoryPercent') {
+        metric.memoryPercent = value;
+      } else if (fieldName.includes('Network RX') || fieldName === 'networkRxBytes') {
+        metric.networkRxBytes = value * 1024 * 1024;
+      } else if (fieldName.includes('Network TX') || fieldName === 'networkTxBytes') {
+        metric.networkTxBytes = value * 1024 * 1024;
+      } else if (fieldName.includes('Disk Read') || fieldName === 'diskReadBytes') {
+        metric.diskReadBytes = value * 1024 * 1024;
+      } else if (fieldName.includes('Disk Write') || fieldName === 'diskWriteBytes') {
+        metric.diskWriteBytes = value * 1024 * 1024;
+      } else if (fieldName.includes('Uptime') || fieldName === 'uptimeSeconds') {
+        metric.uptimeSeconds = value;
+      }
+    }
+  }
+
+  return Array.from(metricsMap.values());
+}
+
+// Fetch container list via data source
+async function fetchContainersViaDataSource(dataSourceUid: string): Promise<ContainerInfo[]> {
+  const srv = getDataSourceSrv();
+  const ds = await srv.get(dataSourceUid);
+
+  if (!ds || typeof ds.query !== 'function') {
+    throw new Error('Data source not found or does not support queries');
+  }
+
+  const now = new Date();
+  const request: DataQueryRequest = {
+    requestId: `docker-containers-${Date.now()}`,
+    interval: '10s',
+    intervalMs: 10000,
+    range: {
+      from: dateTime(now.getTime() - 60000),
+      to: dateTime(now),
+      raw: { from: dateTime(now.getTime() - 60000), to: dateTime(now) },
+    },
+    scopedVars: {},
+    targets: [{
+      refId: 'A',
+      queryType: 'containers',
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }] as any,
+    timezone: 'browser',
+    app: 'panel',
+    startTime: Date.now(),
+  };
+
+  const response = await toPromise(ds.query(request));
+
+  if (!response || !response.data || response.data.length === 0) {
+    return [];
+  }
+
+  const frame = response.data[0];
+  const containers: ContainerInfo[] = [];
+
+  const containerIdField = frame.fields.find((f: { name: string }) => f.name === 'containerId');
+  const containerNameField = frame.fields.find((f: { name: string }) => f.name === 'containerName');
+  const hostNameField = frame.fields.find((f: { name: string }) => f.name === 'hostName');
+
+  if (!containerIdField || !containerNameField) {
+    return [];
+  }
+
+  for (let i = 0; i < frame.length; i++) {
+    containers.push({
+      hostId: hostNameField?.values[i] || 'default',
+      hostName: hostNameField?.values[i] || 'default',
+      containerId: containerIdField.values[i],
+      containerName: containerNameField.values[i],
+      state: 'running',
+      isRunning: true,
+      isPaused: false,
+    });
+  }
+
+  return containers;
+}
 
 const getStyles = () => {
   return {
@@ -543,6 +737,14 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   const metricsPerRow = options.metricsPerRow || 0;
   const styles = useStyles2(getStyles);
 
+  // Data source mode config
+  const dataSourceConfig: DataSourceConfig = options.dataSourceConfig || { useDataSource: false };
+  const useDataSource = dataSourceConfig.useDataSource && dataSourceConfig.dataSourceUid;
+  const dataSourceUid = dataSourceConfig.dataSourceUid || '';
+
+  // Container controls are disabled in data source mode (no auth for control APIs)
+  const effectiveEnableControls = options.enableContainerControls && !useDataSource;
+
   const containerGridStyle = {
     gridTemplateColumns:
       containersPerRow > 0
@@ -640,11 +842,25 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   stableTimeFromRef.current = stableTimeFrom;
   stableTimeToRef.current = stableTimeTo;
 
-  // Fetch containers from all enabled hosts
+  // Fetch containers from all enabled hosts (or via data source)
   useEffect(() => {
     log('Effect:Containers', 'useEffect triggered');
     const fetchContainers = async () => {
       log('Effect:Containers', 'fetchContainers called');
+
+      // Data source mode
+      if (useDataSource && dataSourceUid) {
+        try {
+          const dsContainers = await fetchContainersViaDataSource(dataSourceUid);
+          setContainers(dsContainers);
+        } catch (err) {
+          log('Effect:Containers', `Error fetching from data source: ${err}`);
+          setContainers([]);
+        }
+        return;
+      }
+
+      // Panel proxy mode
       if (enabledHosts.length === 0) {
         setContainers([]);
         return;
@@ -682,7 +898,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
       log('Effect:Containers', 'cleanup');
       clearInterval(interval);
     };
-  }, [enabledHosts, setContainers]);
+  }, [enabledHosts, setContainers, useDataSource, dataSourceUid]);
 
   const targetContainerIds = useMemo(() => {
     if (options.showAllContainers) {
@@ -786,7 +1002,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
 
   // Simple metrics fetching - initial full fetch, then incremental updates
   // Note: Time range is accessed via refs to prevent re-running effect when time changes
-  const metricsEffectKey = `${enabledHosts.map(h => h.id + h.url).join(',')}-${targetContainerIds.join(',')}-${options.showAllContainers}-${options.refreshInterval}-${selectedFields.join(',')}`;
+  const metricsEffectKey = `${useDataSource ? 'ds:' + dataSourceUid : enabledHosts.map(h => h.id + h.url).join(',')}-${targetContainerIds.join(',')}-${options.showAllContainers}-${options.refreshInterval}-${selectedFields.join(',')}`;
   const prevMetricsEffectKeyRef = useRef<string>('');
   useEffect(() => {
     const keyChanged = prevMetricsEffectKeyRef.current !== metricsEffectKey;
@@ -796,11 +1012,22 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     }
     prevMetricsEffectKeyRef.current = metricsEffectKey;
 
-    if (enabledHosts.length === 0) {
-      log('Effect:Metrics', 'No enabled hosts, setting error');
-      setError('No agents configured. Add Docker Metrics Agents in panel options.');
-      setAllMetrics([]);
-      return;
+    // Data source mode validation
+    if (useDataSource) {
+      if (!dataSourceUid) {
+        log('Effect:Metrics', 'Data source mode enabled but no data source selected');
+        setError('Data source mode enabled but no data source selected.');
+        setAllMetrics([]);
+        return;
+      }
+    } else {
+      // Panel proxy mode validation
+      if (enabledHosts.length === 0) {
+        log('Effect:Metrics', 'No enabled hosts, setting error');
+        setError('No agents configured. Add Docker Metrics Agents in panel options, or select a data source.');
+        setAllMetrics([]);
+        return;
+      }
     }
 
     if (targetContainerIds.length === 0 && !options.showAllContainers) {
@@ -819,52 +1046,71 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
         return;
       }
 
-      log('Effect:Metrics', `fetchAllMetrics called, isIncremental: ${isIncremental}`);
+      log('Effect:Metrics', `fetchAllMetrics called, isIncremental: ${isIncremental}, useDataSource: ${useDataSource}`);
 
       // Use refs to get latest time values without causing effect re-runs
-      const from = isIncremental && lastTimestampRef.current
-        ? lastTimestampRef.current
-        : new Date(stableTimeFromRef.current).toISOString();
-      const to = new Date(stableTimeToRef.current).toISOString();
+      const fromDate = isIncremental && lastTimestampRef.current
+        ? new Date(lastTimestampRef.current)
+        : new Date(stableTimeFromRef.current);
+      const toDate = new Date(stableTimeToRef.current);
+      const from = fromDate.toISOString();
+      const to = toDate.toISOString();
 
       if (!isIncremental) {
         setLoading(true);
       }
 
       try {
-        const newMetrics: ContainerMetrics[] = [];
+        let newMetrics: ContainerMetrics[] = [];
         let totalAvailable = 0;
 
-        await Promise.all(
-          enabledHosts.map(async (host: HostConfig) => {
-            try {
-              const url = buildMetricsUrl(
-                host.url,
-                targetContainerIds,
-                selectedFields,
-                from,
-                to,
-                undefined, // no limit - get all data
-                false
-              );
+        // Data source mode - fetch via Grafana data source query API
+        if (useDataSource && dataSourceUid) {
+          try {
+            newMetrics = await fetchMetricsViaDataSource(
+              dataSourceUid,
+              selectedFields,
+              fromDate,
+              toDate
+            );
+            totalAvailable = newMetrics.length;
+          } catch (e) {
+            log('Effect:Metrics', `Error fetching from data source: ${e}`);
+            throw e;
+          }
+        } else {
+          // Panel proxy mode - fetch directly from agents
+          await Promise.all(
+            enabledHosts.map(async (host: HostConfig) => {
+              try {
+                const url = buildMetricsUrl(
+                  host.url,
+                  targetContainerIds,
+                  selectedFields,
+                  from,
+                  to,
+                  undefined, // no limit - get all data
+                  false
+                );
 
-              const response = await proxyGet<MetricsResponse>(url);
-              // Only track totalAvailable from full fetches
-              if (!isIncremental) {
-                totalAvailable += response.metadata.totalAvailable;
+                const response = await proxyGet<MetricsResponse>(url);
+                // Only track totalAvailable from full fetches
+                if (!isIncremental) {
+                  totalAvailable += response.metadata.totalAvailable;
+                }
+                for (const metric of response.metrics) {
+                  newMetrics.push({
+                    ...metric,
+                    hostId: host.id,
+                    hostName: host.name,
+                  });
+                }
+              } catch (e) {
+                log('Effect:Metrics', `Error fetching from host ${host.url}: ${e}`);
               }
-              for (const metric of response.metrics) {
-                newMetrics.push({
-                  ...metric,
-                  hostId: host.id,
-                  hostName: host.name,
-                });
-              }
-            } catch (e) {
-              log('Effect:Metrics', `Error fetching from host ${host.url}: ${e}`);
-            }
-          })
-        );
+            })
+          );
+        }
 
         if (isCancelled) {
           log('Effect:Metrics', 'fetchAllMetrics cancelled after fetch');
@@ -915,6 +1161,8 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   }, [
     // Use stable string keys instead of object references to prevent re-runs
     // Note: Time range NOT included - accessed via refs to prevent re-runs when time changes
+    useDataSource,
+    dataSourceUid,
     enabledHosts.map(h => h.id + h.url).join(','),
     targetContainerIds.join(','),
     options.showAllContainers,
@@ -1183,7 +1431,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           {selectedMetricDefs.map((metricDef) => renderMetric(container, metricDef))}
         </div>
 
-        {options.enableContainerControls && container.hostUrl && (
+        {effectiveEnableControls && container.hostUrl && (
           <ContainerControls
             hostUrl={container.hostUrl}
             containerId={container.containerId}
