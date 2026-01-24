@@ -4,6 +4,7 @@ import { SimplePanel } from './components/SimplePanel';
 import { HostManagerEditor } from './components/HostManagerEditor';
 import { ContainerSelectorEditor } from './components/ContainerSelectorEditor';
 import { MetricSelectorEditor } from './components/MetricSelectorEditor';
+import { DataSourceEditor } from './components/DataSourceEditor';
 
 export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOptions((builder) => {
   console.warn('[DockerMetrics:module] setPanelOptions called, registering options...');
@@ -94,5 +95,14 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
         max: 300,
         integer: true,
       },
+    })
+    .addCustomEditor({
+      id: 'dataSourceSelector',
+      path: 'dataSourceConfig',
+      name: 'Public Dashboard Support',
+      description: 'Use a data source for metrics to enable public dashboard support',
+      category: ['Data Source'],
+      editor: DataSourceEditor,
+      defaultValue: { useDataSource: false },
     });
 });

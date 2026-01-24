@@ -10,6 +10,14 @@ export interface SimpleOptions {
   enableContainerControls: boolean;
   refreshInterval: number; // Refresh interval in seconds
   stripMode: boolean;               // Strip mode - hide host headers, show all containers in a single grid
+  // Data source mode - for public dashboard support
+  dataSourceConfig?: DataSourceConfig;
+}
+
+// Data source configuration for public dashboard support
+export interface DataSourceConfig {
+  useDataSource: boolean;           // When true, fetch metrics via data source instead of panel proxy
+  dataSourceUid?: string;           // UID of the Docker Metrics data source to use
 }
 
 // Progressive fetch stages
