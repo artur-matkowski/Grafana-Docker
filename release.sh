@@ -137,6 +137,12 @@ build_plugin() {
     # Build frontend
     npm run build >&2
 
+    # Verify frontend build succeeded
+    if [ ! -f "dist/module.js" ]; then
+        log_error "Frontend build failed: dist/module.js not found"
+        exit 1
+    fi
+
     # Build Go backend for multiple platforms
     log_info "Building backend binaries..."
 
@@ -173,6 +179,12 @@ build_plugin() {
         -o dist/gpx_bitforge_dockermetrics_panel_windows_amd64.exe \
         ./pkg >&2
 
+    # Verify backend build succeeded
+    if [ ! -f "dist/gpx_bitforge_dockermetrics_panel_linux_amd64" ]; then
+        log_error "Backend build failed: linux_amd64 binary not found"
+        exit 1
+    fi
+
     log_success "Backend binaries built"
 
     # Create tar.gz
@@ -182,11 +194,12 @@ build_plugin() {
     mkdir -p "${SCRIPT_DIR}/dist"
 
     # Create archive with proper structure for Grafana
-    cd dist
+    local plugin_dist="${SCRIPT_DIR}/bitforge-dockermetrics-panel/dist"
+    cd "${plugin_dist}"
     tar -czvf "${tar_path}" \
         --exclude="*.tar.gz" \
         . >&2
-    cd ..
+    cd "${SCRIPT_DIR}/bitforge-dockermetrics-panel"
 
     log_success "Plugin built: ${tar_path}"
 

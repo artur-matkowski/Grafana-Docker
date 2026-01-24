@@ -138,7 +138,7 @@ SimplePanel uses React hooks for state:
 
 ## Metrics Display
 
-14 metrics available for display:
+13 metrics available for display (with sparkline graphs):
 
 | Metric Key | Display Name |
 |------------|--------------|
@@ -149,13 +149,14 @@ SimplePanel uses React hooks for state:
 | `networkTxBytes` | Network TX |
 | `diskReadBytes` | Disk Read |
 | `diskWriteBytes` | Disk Write |
-| `uptimeSeconds` | Uptime |
 | `cpuPressureSome10` | CPU Pressure (some) |
 | `cpuPressureFull10` | CPU Pressure (full) |
 | `memoryPressureSome10` | Mem Pressure (some) |
 | `memoryPressureFull10` | Mem Pressure (full) |
 | `ioPressureSome10` | I/O Pressure (some) |
 | `ioPressureFull10` | I/O Pressure (full) |
+
+**Uptime Display**: Container uptime is shown as a static value in the container header (next to the status indicator), not as a historical graph. Since uptime increases linearly over time, historical graphing provides no value.
 
 ## Container Controls
 
