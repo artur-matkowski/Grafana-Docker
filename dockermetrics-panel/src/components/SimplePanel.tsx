@@ -6,7 +6,7 @@ import { useStyles2 } from '@grafana/ui';
 import { proxyGet, proxyPost } from '../utils/proxy';
 
 // Debug logging - set to true when troubleshooting issues
-const DEBUG = true;
+const DEBUG = false;
 const log = (area: string, message: string, data?: unknown) => {
   if (DEBUG) {
     // Use warn instead of log - less likely to be stripped
@@ -150,7 +150,6 @@ const getStyles = () => {
       margin-bottom: 10px;
       padding-bottom: 8px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      overflow: visible; /* DEBUG - ensure children aren't clipped */
     `,
     containerName: css`
       font-size: 13px;
@@ -170,7 +169,6 @@ const getStyles = () => {
       color: #888;
       margin-left: 8px;
       flex-shrink: 0;
-      background: red; /* DEBUG */
     `,
     metricsGrid: css`
       display: grid;
@@ -627,9 +625,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     }
     // Always fetch uptimeSeconds for header display (not a selectable metric)
     fields.add('uptimeSeconds');
-    const result = Array.from(fields);
-    log('Fields', 'Selected fields for API request', result);
-    return result;
+    return Array.from(fields);
   }, [options.selectedMetrics]);
 
   // Fetch state - using refs to avoid re-render loops
@@ -858,15 +854,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                 totalAvailable += response.metadata.totalAvailable;
               }
               for (const metric of response.metrics) {
-                // Log first metric to see what fields are present
-                if (response.metrics.indexOf(metric) === 0) {
-                  log('Effect:Metrics', `Sample metric fields from ${host.name}`, {
-                    containerId: metric.containerId,
-                    uptimeSeconds: metric.uptimeSeconds,
-                    hasUptime: 'uptimeSeconds' in metric,
-                    allKeys: Object.keys(metric),
-                  });
-                }
                 newMetrics.push({
                   ...metric,
                   hostId: host.id,
@@ -1193,15 +1180,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
                 }
                 return styles.containerCard;
               };
-
-              // Debug uptime data
-              log('Uptime', `Container ${container.containerName}`, {
-                hasLatest: !!container.latest,
-                uptimeSeconds: container.latest?.uptimeSeconds,
-                uptimeType: typeof container.latest?.uptimeSeconds,
-                condition1: container.latest?.uptimeSeconds !== undefined,
-                condition2: container.latest?.uptimeSeconds ? container.latest.uptimeSeconds > 0 : 'N/A',
-              });
 
               return (
               <div key={container.containerId} className={getCardClass()}>
