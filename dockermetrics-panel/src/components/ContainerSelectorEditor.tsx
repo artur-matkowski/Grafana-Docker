@@ -1,6 +1,6 @@
 import React from 'react';
 import { StandardEditorProps } from '@grafana/data';
-import { SimpleOptions, DEFAULT_HOSTS } from '../types';
+import { SimpleOptions } from '../types';
 import { ContainerSelector } from './ContainerSelector';
 
 export const ContainerSelectorEditor: React.FC<StandardEditorProps<string[], any, SimpleOptions>> = ({
@@ -22,7 +22,7 @@ export const ContainerSelectorEditor: React.FC<StandardEditorProps<string[], any
 
   return (
     <ContainerSelector
-      hosts={context.options?.hosts || DEFAULT_HOSTS}
+      dataSourceConfig={context.options?.dataSourceConfig || { useDataSource: false }}
       selectedContainerIds={value || []}
       blacklistedContainerIds={context.options?.containerBlacklist || []}
       showAllContainers={context.options?.showAllContainers || false}

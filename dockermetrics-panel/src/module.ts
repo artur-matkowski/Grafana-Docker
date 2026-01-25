@@ -1,22 +1,20 @@
 import { PanelPlugin } from '@grafana/data';
-import { SimpleOptions, DEFAULT_METRICS, DEFAULT_HOSTS } from './types';
+import { SimpleOptions, DEFAULT_METRICS } from './types';
 import { SimplePanel } from './components/SimplePanel';
-import { HostManagerEditor } from './components/HostManagerEditor';
 import { ContainerSelectorEditor } from './components/ContainerSelectorEditor';
 import { MetricSelectorEditor } from './components/MetricSelectorEditor';
 import { DataSourceEditor } from './components/DataSourceEditor';
 
 export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOptions((builder) => {
-  console.warn('[DockerMetrics:module] setPanelOptions called, registering options...');
   return builder
     .addCustomEditor({
-      id: 'hostManager',
-      path: 'hosts',
-      name: 'Docker Metrics Agents',
-      description: 'Configure agents running on each Docker host',
-      category: ['Agents'],
-      editor: HostManagerEditor,
-      defaultValue: DEFAULT_HOSTS,
+      id: 'dataSourceSelector',
+      path: 'dataSourceConfig',
+      name: 'Data Source',
+      description: 'Select the Docker Metrics data source to fetch metrics from',
+      category: ['Data Source'],
+      editor: DataSourceEditor,
+      defaultValue: { useDataSource: false },
     })
     .addBooleanSwitch({
       path: 'showAllContainers',
@@ -48,10 +46,6 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       description: 'Hide host headers and show all containers in a single grid (useful for small panels)',
       defaultValue: false,
       category: ['Layout'],
-      showIf: (config) => {
-        console.warn('[DockerMetrics:module] stripMode showIf called, config:', config);
-        return true;
-      },
     })
     .addNumberInput({
       path: 'containersPerRow',
@@ -77,13 +71,6 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
         integer: true,
       },
     })
-    .addBooleanSwitch({
-      path: 'enableContainerControls',
-      name: 'Enable Container Controls',
-      description: 'Show start/stop/restart/pause buttons for each container',
-      defaultValue: false,
-      category: ['Controls'],
-    })
     .addNumberInput({
       path: 'refreshInterval',
       name: 'Refresh Interval',
@@ -95,14 +82,5 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
         max: 300,
         integer: true,
       },
-    })
-    .addCustomEditor({
-      id: 'dataSourceSelector',
-      path: 'dataSourceConfig',
-      name: 'Public Dashboard Support',
-      description: 'Use a data source for metrics to enable public dashboard support',
-      category: ['Data Source'],
-      editor: DataSourceEditor,
-      defaultValue: { useDataSource: false },
     });
 });

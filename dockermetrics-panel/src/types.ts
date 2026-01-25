@@ -1,23 +1,20 @@
+// Data source configuration (required)
+export interface DataSourceConfig {
+  useDataSource: boolean;
+  dataSourceUid?: string;
+}
+
 // Panel options
 export interface SimpleOptions {
-  hosts: HostConfig[];
+  dataSourceConfig: DataSourceConfig;
   containerIds: string[];           // Whitelist - containers to show when showAllContainers is false
   containerBlacklist: string[];     // Blacklist - containers to exclude when showAllContainers is true
   showAllContainers: boolean;
   selectedMetrics: string[];
   containersPerRow: number;
   metricsPerRow: number;
-  enableContainerControls: boolean;
   refreshInterval: number; // Refresh interval in seconds
   stripMode: boolean;               // Strip mode - hide host headers, show all containers in a single grid
-  // Data source mode - for public dashboard support
-  dataSourceConfig?: DataSourceConfig;
-}
-
-// Data source configuration for public dashboard support
-export interface DataSourceConfig {
-  useDataSource: boolean;           // When true, fetch metrics via data source instead of panel proxy
-  dataSourceUid?: string;           // UID of the Docker Metrics data source to use
 }
 
 // Progressive fetch stages
@@ -44,34 +41,6 @@ export interface MetricsResponse {
   metadata: MetricsMetadata;
 }
 
-// Host configuration (stored in panel options)
-export interface HostConfig {
-  id: string;
-  name: string;
-  url: string;
-  enabled: boolean;
-}
-
-// Host with runtime status
-export interface HostStatus extends HostConfig {
-  isHealthy: boolean;
-  lastError: string | null;
-  hostname: string | null;
-  agentVersion: string | null;
-  dockerVersion: string | null;
-  psiSupported: boolean;
-  containerCount: number;
-}
-
-// Agent info response
-export interface AgentInfo {
-  hostname: string;
-  agentVersion: string;
-  dockerVersion: string;
-  dockerConnected: boolean;
-  psiSupported: boolean;
-}
-
 // Container info for listing
 export interface ContainerInfo {
   hostId: string;
@@ -82,33 +51,6 @@ export interface ContainerInfo {
   isRunning: boolean;
   isPaused: boolean;
 }
-
-// Real-time container status
-export interface ContainerStatus {
-  containerId: string;
-  containerName: string;
-  status: string;
-  isRunning: boolean;
-  isPaused: boolean;
-}
-
-// Container control actions
-export type ContainerAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause';
-
-// Pending action state for container controls
-export interface PendingAction {
-  action: ContainerAction;
-  startTime: number;
-}
-
-// Labels for pending action states
-export const PENDING_ACTION_LABELS: Record<ContainerAction, string> = {
-  start: 'Starting...',
-  stop: 'Stopping...',
-  restart: 'Restarting...',
-  pause: 'Pausing...',
-  unpause: 'Resuming...',
-};
 
 // PSI metrics
 export interface PsiMetrics {
@@ -273,6 +215,3 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
 
 // Default metrics to show
 export const DEFAULT_METRICS = ['cpuPercent', 'memoryBytes'];
-
-// Default hosts (empty)
-export const DEFAULT_HOSTS: HostConfig[] = [];
