@@ -1,21 +1,11 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { PanelProps, DataQueryRequest, DataFrameView, dateTime } from '@grafana/data';
-import { SimpleOptions, ContainerMetrics, ContainerInfo, ContainerStatus, HostConfig, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DEFAULT_HOSTS, ContainerAction, PendingAction, PENDING_ACTION_LABELS, MetricsResponse, DataSourceConfig } from 'types';
+import { SimpleOptions, ContainerMetrics, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DataSourceConfig } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
-import { proxyGet, proxyPost } from '../utils/proxy';
 import { getDataSourceSrv } from '@grafana/runtime';
 
-// Debug logging - set to true when troubleshooting issues
-const DEBUG = false;
-const log = (area: string, message: string, data?: unknown) => {
-  if (DEBUG) {
-    // Use warn instead of log - less likely to be stripped
-    console.warn(`[DockerMetrics:${area}]`, message, data !== undefined ? data : '');
-  }
-};
-
-// Format uptime seconds to human-readable string (e.g., "2d 5h", "3h 20m", "45m")
+// Format uptime seconds to human-readable string
 const formatUptime = (seconds: number): string => {
   if (seconds < 60) {
     return `${Math.floor(seconds)}s`;
@@ -51,7 +41,6 @@ const METRIC_TO_FIELD: Record<string, string> = {
   ioPressureFull: 'ioPressure',
 };
 
-
 interface Props extends PanelProps<SimpleOptions> {}
 
 // Helper to convert Observable or Promise to Promise
@@ -62,13 +51,12 @@ async function toPromise<T>(result: Promise<T> | { toPromise(): Promise<T> }): P
   return result as Promise<T>;
 }
 
-// Fetch metrics via data source query API (for public dashboard support)
+// Fetch metrics via data source query API
 async function fetchMetricsViaDataSource(
   dataSourceUid: string,
   metrics: string[],
   from: Date,
-  to: Date,
-  containerNamePattern?: string
+  to: Date
 ): Promise<ContainerMetrics[]> {
   const srv = getDataSourceSrv();
   const ds = await srv.get(dataSourceUid);
@@ -91,7 +79,7 @@ async function fetchMetricsViaDataSource(
       refId: 'A',
       queryType: 'metrics',
       metrics: metrics,
-      containerNamePattern: containerNamePattern || '',
+      containerNamePattern: '',
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     }] as any,
     timezone: 'browser',
@@ -105,7 +93,7 @@ async function fetchMetricsViaDataSource(
     return [];
   }
 
-  // Convert DataFrames back to ContainerMetrics format
+  // Convert DataFrames to ContainerMetrics format
   const metricsMap = new Map<string, ContainerMetrics>();
 
   for (const frame of response.data) {
@@ -124,8 +112,6 @@ async function fetchMetricsViaDataSource(
     const containerId = labels.containerId || '';
     const containerName = labels.containerName || '';
     const hostName = labels.hostName || 'default';
-
-    // Determine which metric this is based on field name
     const fieldName = valueField.name || '';
 
     const view = new DataFrameView(frame);
@@ -160,11 +146,10 @@ async function fetchMetricsViaDataSource(
 
       const metric = metricsMap.get(key)!;
 
-      // Map display names back to metric keys (data source sends display names)
+      // Map display names back to metric keys
       if (fieldName.includes('CPU %') || fieldName === 'cpuPercent') {
         metric.cpuPercent = value;
       } else if (fieldName.includes('Memory (MB)') || fieldName === 'memoryBytes') {
-        // Convert back to bytes (data source sends MB)
         metric.memoryBytes = value * 1024 * 1024;
       } else if (fieldName.includes('Memory %') || fieldName === 'memoryPercent') {
         metric.memoryPercent = value;
@@ -306,38 +291,6 @@ const getStyles = () => {
       border-radius: 6px;
       padding: 12px;
     `,
-    containerCardWarning: css`
-      background: rgba(255, 152, 48, 0.12);
-      border-color: rgba(255, 152, 48, 0.5);
-      animation: pulse-warning 1s ease-in-out infinite;
-
-      @keyframes pulse-warning {
-        0%, 100% {
-          background: rgba(255, 152, 48, 0.06);
-          border-color: rgba(255, 152, 48, 0.3);
-        }
-        50% {
-          background: rgba(255, 152, 48, 0.25);
-          border-color: rgba(255, 152, 48, 0.7);
-        }
-      }
-    `,
-    containerCardStopped: css`
-      background: rgba(242, 73, 92, 0.12);
-      border-color: rgba(242, 73, 92, 0.5);
-      animation: pulse-stopped 1s ease-in-out infinite;
-
-      @keyframes pulse-stopped {
-        0%, 100% {
-          background: rgba(242, 73, 92, 0.06);
-          border-color: rgba(242, 73, 92, 0.3);
-        }
-        50% {
-          background: rgba(242, 73, 92, 0.25);
-          border-color: rgba(242, 73, 92, 0.7);
-        }
-      }
-    `,
     containerHeader: css`
       display: flex;
       align-items: center;
@@ -411,64 +364,6 @@ const getStyles = () => {
       margin-bottom: 12px;
       display: flex;
       gap: 16px;
-    `,
-    controlsRow: css`
-      display: flex;
-      gap: 4px;
-      margin-top: 10px;
-      padding-top: 8px;
-      border-top: 1px solid rgba(255, 255, 255, 0.05);
-    `,
-    controlButton: css`
-      flex: 1;
-      padding: 6px 8px;
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      border-radius: 4px;
-      background: rgba(0, 0, 0, 0.2);
-      color: #ccc;
-      font-size: 10px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 4px;
-      transition: all 0.15s ease;
-      &:hover {
-        background: rgba(255, 255, 255, 0.1);
-        border-color: rgba(255, 255, 255, 0.25);
-      }
-      &:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-    `,
-    controlButtonStart: css`
-      &:hover {
-        background: rgba(115, 191, 105, 0.2);
-        border-color: #73bf69;
-        color: #73bf69;
-      }
-    `,
-    controlButtonStop: css`
-      &:hover {
-        background: rgba(242, 73, 92, 0.2);
-        border-color: #f2495c;
-        color: #f2495c;
-      }
-    `,
-    controlButtonRestart: css`
-      &:hover {
-        background: rgba(255, 152, 48, 0.2);
-        border-color: #ff9830;
-        color: #ff9830;
-      }
-    `,
-    controlButtonPause: css`
-      &:hover {
-        background: rgba(87, 148, 242, 0.2);
-        border-color: #5794f2;
-        color: #5794f2;
-      }
     `,
   };
 };
@@ -544,7 +439,6 @@ interface ContainerWithMetrics {
   containerName: string;
   hostId: string;
   hostName: string;
-  hostUrl: string;
   metrics: ContainerMetrics[];
   latest: ContainerMetrics | null;
   rateData: Map<string, number[]>;
@@ -554,7 +448,6 @@ interface ContainerWithMetrics {
 // Calculate rate (delta/time) from cumulative values
 function calculateRates(
   metrics: ContainerMetrics[],
-  metricKey: string,
   getValue: (s: ContainerMetrics) => number | null
 ): number[] {
   if (metrics.length < 2) return [];
@@ -579,151 +472,8 @@ function calculateRates(
   return rates;
 }
 
-interface ContainerControlsProps {
-  hostUrl: string;
-  containerId: string;
-  isRunning: boolean;
-  isPaused: boolean;
-  styles: ReturnType<typeof getStyles>;
-  pendingAction: PendingAction | null;
-  onPendingStart: (containerId: string, action: ContainerAction) => void;
-  onPendingComplete: (containerId: string) => void;
-  onStatusUpdate?: (status: ContainerStatus) => void;
-}
-
-const ContainerControls: React.FC<ContainerControlsProps> = ({
-  hostUrl,
-  containerId,
-  isRunning,
-  isPaused,
-  styles,
-  pendingAction,
-  onPendingStart,
-  onPendingComplete,
-  onStatusUpdate,
-}) => {
-  // Helper to get expected state for an action
-  const getExpectedState = useCallback((action: ContainerAction): { expectedRunning: boolean; expectedPaused: boolean } => {
-    switch (action) {
-      case 'start':
-        return { expectedRunning: true, expectedPaused: false };
-      case 'stop':
-        return { expectedRunning: false, expectedPaused: false };
-      case 'restart':
-        return { expectedRunning: true, expectedPaused: false };
-      case 'pause':
-        return { expectedRunning: true, expectedPaused: true };
-      case 'unpause':
-        return { expectedRunning: true, expectedPaused: false };
-      default:
-        return { expectedRunning: isRunning, expectedPaused: isPaused };
-    }
-  }, [isRunning, isPaused]);
-
-  // Poll for status and check if it matches expected state
-  const pollForStatus = useCallback(async (action: ContainerAction) => {
-    const { expectedRunning, expectedPaused } = getExpectedState(action);
-    const maxAttempts = 30; // 15 seconds at 500ms intervals
-
-    for (let i = 0; i < maxAttempts; i++) {
-      try {
-        const status = await proxyGet<ContainerStatus>(`${hostUrl}/api/containers/${containerId}/status`);
-
-        // Only update status when it matches expected state
-        // This ensures the pending state stays visible until action is confirmed
-        if (status.isRunning === expectedRunning && status.isPaused === expectedPaused) {
-          onStatusUpdate?.(status);
-          onPendingComplete(containerId);
-          return;
-        }
-        // Don't update status for intermediate states - let pending state show
-      } catch {
-        // Ignore polling errors
-      }
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-
-    // Timeout reached - clear pending state, let normal metrics refresh handle status
-    onPendingComplete(containerId);
-  }, [hostUrl, containerId, getExpectedState, onStatusUpdate, onPendingComplete]);
-
-  const executeAction = async (action: ContainerAction) => {
-    // Set pending state before API call
-    onPendingStart(containerId, action);
-
-    try {
-      await proxyPost(`${hostUrl}/api/containers/${containerId}/${action}`);
-      // Start polling for expected state
-      pollForStatus(action);
-    } catch (err) {
-      console.error(`Failed to ${action} container:`, err);
-      // Clear pending on error
-      onPendingComplete(containerId);
-    }
-  };
-
-  // Check if any action is pending
-  const isActionPending = pendingAction !== null;
-
-  return (
-    <div className={styles.controlsRow}>
-      {!isRunning ? (
-        <button
-          className={`${styles.controlButton} ${styles.controlButtonStart}`}
-          onClick={() => executeAction('start')}
-          disabled={isActionPending}
-          title="Start container"
-        >
-          {pendingAction?.action === 'start' ? '...' : '▶ Start'}
-        </button>
-      ) : (
-        <button
-          className={`${styles.controlButton} ${styles.controlButtonStop}`}
-          onClick={() => executeAction('stop')}
-          disabled={isActionPending}
-          title="Stop container"
-        >
-          {pendingAction?.action === 'stop' ? '...' : '■ Stop'}
-        </button>
-      )}
-      <button
-        className={`${styles.controlButton} ${styles.controlButtonRestart}`}
-        onClick={() => executeAction('restart')}
-        disabled={isActionPending || !isRunning}
-        title="Restart container"
-      >
-        {pendingAction?.action === 'restart' ? '...' : '↻ Restart'}
-      </button>
-      {isPaused ? (
-        <button
-          className={`${styles.controlButton} ${styles.controlButtonStart}`}
-          onClick={() => executeAction('unpause')}
-          disabled={isActionPending}
-          title="Unpause container"
-        >
-          {pendingAction?.action === 'unpause' ? '...' : '▶ Unpause'}
-        </button>
-      ) : (
-        <button
-          className={`${styles.controlButton} ${styles.controlButtonPause}`}
-          onClick={() => executeAction('pause')}
-          disabled={isActionPending || !isRunning}
-          title="Pause container"
-        >
-          {pendingAction?.action === 'pause' ? '...' : '⏸ Pause'}
-        </button>
-      )}
-    </div>
-  );
-};
-
 export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange }) => {
-  const renderCountRef = useRef(0);
-  renderCountRef.current++;
-  log('Render', `Component rendering #${renderCountRef.current}`);
-
-  // Stabilize time range - round to nearest 10 seconds to prevent constant re-fetches
-  // when using "Last X minutes" with live "now" endpoint
+  // Stabilize time range
   const stableTimeFrom = useMemo(() => {
     return Math.floor(timeRange.from.valueOf() / 10000) * 10000;
   }, [timeRange.from]);
@@ -731,19 +481,13 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     return Math.floor(timeRange.to.valueOf() / 10000) * 10000;
   }, [timeRange.to]);
 
-  const hosts = useMemo(() => options.hosts || DEFAULT_HOSTS, [options.hosts]);
-  const enabledHosts = useMemo(() => hosts.filter((h: HostConfig) => h.enabled), [hosts]);
   const containersPerRow = options.containersPerRow || 0;
   const metricsPerRow = options.metricsPerRow || 0;
   const styles = useStyles2(getStyles);
 
-  // Data source mode config
+  // Data source config
   const dataSourceConfig: DataSourceConfig = options.dataSourceConfig || { useDataSource: false };
-  const useDataSource = dataSourceConfig.useDataSource && dataSourceConfig.dataSourceUid;
   const dataSourceUid = dataSourceConfig.dataSourceUid || '';
-
-  // Container controls are disabled in data source mode (no auth for control APIs)
-  const effectiveEnableControls = options.enableContainerControls && !useDataSource;
 
   const containerGridStyle = {
     gridTemplateColumns:
@@ -757,58 +501,10 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
       metricsPerRow > 0 ? `repeat(${metricsPerRow}, 1fr)` : 'repeat(auto-fill, minmax(120px, 1fr))',
   };
 
-  const [allMetrics, setAllMetricsRaw] = useState<ContainerMetrics[]>([]);
-  const [containers, setContainersRaw] = useState<ContainerInfo[]>([]);
-  const [error, setErrorRaw] = useState<string | null>(null);
-  const [loading, setLoadingRaw] = useState<boolean>(false);
-
-  // Wrapped setters with logging
-  const setAllMetrics = useCallback((metrics: ContainerMetrics[]) => {
-    log('State', `setAllMetrics called, count: ${metrics.length}`);
-    setAllMetricsRaw(metrics);
-  }, []);
-  const setContainers = useCallback((c: ContainerInfo[]) => {
-    log('State', `setContainers called, count: ${c.length}`);
-    setContainersRaw(c);
-  }, []);
-  const setError = useCallback((e: string | null) => {
-    log('State', `setError called: ${e}`);
-    setErrorRaw(e);
-  }, []);
-  const setLoading = useCallback((l: boolean) => {
-    log('State', `setLoading called: ${l}`);
-    setLoadingRaw(l);
-  }, []);
-
-  // Track real-time status overrides (from control actions)
-  const [statusOverrides, setStatusOverrides] = useState<Map<string, ContainerStatus>>(new Map());
-
-  // Track pending actions per container
-  const [pendingActions, setPendingActions] = useState<Map<string, PendingAction>>(new Map());
-
-  const handleStatusUpdate = useCallback((status: ContainerStatus) => {
-    setStatusOverrides(prev => {
-      const next = new Map(prev);
-      next.set(status.containerId, status);
-      return next;
-    });
-  }, []);
-
-  const handlePendingStart = useCallback((containerId: string, action: ContainerAction) => {
-    setPendingActions(prev => {
-      const next = new Map(prev);
-      next.set(containerId, { action, startTime: Date.now() });
-      return next;
-    });
-  }, []);
-
-  const handlePendingComplete = useCallback((containerId: string) => {
-    setPendingActions(prev => {
-      const next = new Map(prev);
-      next.delete(containerId);
-      return next;
-    });
-  }, []);
+  const [allMetrics, setAllMetrics] = useState<ContainerMetrics[]>([]);
+  const [containers, setContainers] = useState<ContainerInfo[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
 
   const selectedMetricDefs = useMemo(() => {
     const selected = options.selectedMetrics || DEFAULT_METRICS;
@@ -825,84 +521,42 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
         fields.add(field);
       }
     }
-    // Always fetch uptimeSeconds for header display (not a selectable metric)
     fields.add('uptimeSeconds');
     return Array.from(fields);
   }, [options.selectedMetrics]);
 
-  // Fetch state - using refs to avoid re-render loops
+  // Fetch state refs
   const lastTimestampRef = useRef<string | null>(null);
   const metricsMapRef = useRef<Map<string, ContainerMetrics>>(new Map());
-  const totalAvailableRef = useRef<number>(0);
   const initialFetchDoneRef = useRef<boolean>(false);
-
-  // Time range refs - used by fetch callbacks to get latest values without causing re-runs
   const stableTimeFromRef = useRef<number>(stableTimeFrom);
   const stableTimeToRef = useRef<number>(stableTimeTo);
   stableTimeFromRef.current = stableTimeFrom;
   stableTimeToRef.current = stableTimeTo;
 
-  // Fetch containers from all enabled hosts (or via data source)
+  // Fetch containers
   useEffect(() => {
-    log('Effect:Containers', 'useEffect triggered');
+    if (!dataSourceUid) {
+      setContainers([]);
+      return;
+    }
+
     const fetchContainers = async () => {
-      log('Effect:Containers', 'fetchContainers called');
-
-      // Data source mode
-      if (useDataSource && dataSourceUid) {
-        try {
-          const dsContainers = await fetchContainersViaDataSource(dataSourceUid);
-          setContainers(dsContainers);
-        } catch (err) {
-          log('Effect:Containers', `Error fetching from data source: ${err}`);
-          setContainers([]);
-        }
-        return;
-      }
-
-      // Panel proxy mode
-      if (enabledHosts.length === 0) {
-        setContainers([]);
-        return;
-      }
-
       try {
-        const allContainers: ContainerInfo[] = [];
-
-        await Promise.all(
-          enabledHosts.map(async (host: HostConfig) => {
-            try {
-              const data = await proxyGet<Array<{ containerId: string; containerName: string; state: string; isRunning: boolean; isPaused: boolean }>>(`${host.url}/api/containers?all=true`);
-              for (const container of data) {
-                allContainers.push({
-                  ...container,
-                  hostId: host.id,
-                  hostName: host.name,
-                });
-              }
-            } catch {
-              // Ignore individual host errors
-            }
-          })
-        );
-
-        setContainers(allContainers);
+        const dsContainers = await fetchContainersViaDataSource(dataSourceUid);
+        setContainers(dsContainers);
       } catch {
-        // Ignore errors
+        setContainers([]);
       }
     };
 
     fetchContainers();
     const interval = setInterval(fetchContainers, 30000);
-    return () => {
-      log('Effect:Containers', 'cleanup');
-      clearInterval(interval);
-    };
-  }, [enabledHosts, setContainers, useDataSource, dataSourceUid]);
+    return () => clearInterval(interval);
+  }, [dataSourceUid]);
 
   const targetContainerIds = useMemo(() => {
     if (options.showAllContainers) {
-      // Show all containers except blacklisted ones
       const blacklist = options.containerBlacklist || [];
       return containers
         .map((c) => c.containerId)
@@ -911,23 +565,20 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     return options.containerIds || [];
   }, [options.showAllContainers, options.containerIds, options.containerBlacklist, containers]);
 
-  // Reset fetch state ONLY when container selection changes
-  // Time range changes should NOT trigger a reset - we prune old data instead
+  // Reset on container selection change
   const resetKey = targetContainerIds.join(',');
   const prevResetKeyRef = useRef<string>('');
   useEffect(() => {
     if (prevResetKeyRef.current !== resetKey) {
-      log('Effect:Reset', `Container selection changed, resetting`);
       prevResetKeyRef.current = resetKey;
       metricsMapRef.current.clear();
       lastTimestampRef.current = null;
-      totalAvailableRef.current = 0;
       initialFetchDoneRef.current = false;
       setAllMetrics([]);
     }
-  }, [resetKey, setAllMetrics]);
+  }, [resetKey]);
 
-  // Prune old metrics that are outside the current time range
+  // Prune old metrics
   useEffect(() => {
     const fromMs = stableTimeFrom;
     const map = metricsMapRef.current;
@@ -942,14 +593,11 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     }
 
     if (pruned > 0) {
-      log('Effect:Prune', `Pruned ${pruned} old metrics outside time range`);
-      // Update state with pruned data
       setAllMetrics(Array.from(map.values()));
     }
-  }, [stableTimeFrom, setAllMetrics]);
+  }, [stableTimeFrom]);
 
-  // Merge new metrics with existing, deduplicating by containerId+timestamp
-  // Note: No dependencies - uses refs and sets all metrics, filtering happens in useMemo
+  // Merge metrics
   const mergeMetrics = useCallback((newMetrics: ContainerMetrics[]) => {
     const map = metricsMapRef.current;
     let maxTimestamp = lastTimestampRef.current;
@@ -965,73 +613,19 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     }
 
     lastTimestampRef.current = maxTimestamp;
-
-    // Set all metrics - filtering by target containers happens in containersByHost useMemo
     setAllMetrics(Array.from(map.values()));
   }, []);
 
-  // Build URL with query parameters for metrics fetch
-  const buildMetricsUrl = useCallback((
-    hostUrl: string,
-    containerIds: string[],
-    fields: string[],
-    from: string,
-    to: string,
-    limit?: number,
-    latest?: boolean
-  ) => {
-    const params = new URLSearchParams();
-    params.set('from', from);
-    params.set('to', to);
-
-    if (containerIds.length > 0) {
-      params.set('containerIds', containerIds.join(','));
-    }
-    if (fields.length > 0) {
-      params.set('fields', fields.join(','));
-    }
-    if (limit && limit > 0) {
-      params.set('limit', limit.toString());
-    }
-    if (latest) {
-      params.set('latest', 'true');
-    }
-
-    return `${hostUrl}/api/metrics?${params.toString()}`;
-  }, []);
-
-  // Simple metrics fetching - initial full fetch, then incremental updates
-  // Note: Time range is accessed via refs to prevent re-running effect when time changes
-  const metricsEffectKey = `${useDataSource ? 'ds:' + dataSourceUid : enabledHosts.map(h => h.id + h.url).join(',')}-${targetContainerIds.join(',')}-${options.showAllContainers}-${options.refreshInterval}-${selectedFields.join(',')}`;
-  const prevMetricsEffectKeyRef = useRef<string>('');
+  // Fetch metrics
+  const metricsEffectKey = `${dataSourceUid}-${targetContainerIds.join(',')}-${options.showAllContainers}-${options.refreshInterval}-${selectedFields.join(',')}`;
   useEffect(() => {
-    const keyChanged = prevMetricsEffectKeyRef.current !== metricsEffectKey;
-    log('Effect:Metrics', `useEffect triggered, keyChanged: ${keyChanged}`);
-    if (keyChanged) {
-      log('Effect:Metrics', `Key changed from "${prevMetricsEffectKeyRef.current.substring(0, 80)}..." to "${metricsEffectKey.substring(0, 80)}..."`);
-    }
-    prevMetricsEffectKeyRef.current = metricsEffectKey;
-
-    // Data source mode validation
-    if (useDataSource) {
-      if (!dataSourceUid) {
-        log('Effect:Metrics', 'Data source mode enabled but no data source selected');
-        setError('Data source mode enabled but no data source selected.');
-        setAllMetrics([]);
-        return;
-      }
-    } else {
-      // Panel proxy mode validation
-      if (enabledHosts.length === 0) {
-        log('Effect:Metrics', 'No enabled hosts, setting error');
-        setError('No agents configured. Add Docker Metrics Agents in panel options, or select a data source.');
-        setAllMetrics([]);
-        return;
-      }
+    if (!dataSourceUid) {
+      setError('No data source selected. Please configure a Docker Metrics data source in panel options.');
+      setAllMetrics([]);
+      return;
     }
 
     if (targetContainerIds.length === 0 && !options.showAllContainers) {
-      log('Effect:Metrics', 'No containers selected, setting error');
       setError('No containers selected. Enable "Show All Containers" or select specific containers.');
       setAllMetrics([]);
       return;
@@ -1041,87 +635,28 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     let isCancelled = false;
 
     const fetchAllMetrics = async (isIncremental: boolean) => {
-      if (isCancelled) {
-        log('Effect:Metrics', 'fetchAllMetrics skipped - cancelled');
-        return;
-      }
+      if (isCancelled) return;
 
-      log('Effect:Metrics', `fetchAllMetrics called, isIncremental: ${isIncremental}, useDataSource: ${useDataSource}`);
-
-      // Use refs to get latest time values without causing effect re-runs
       const fromDate = isIncremental && lastTimestampRef.current
         ? new Date(lastTimestampRef.current)
         : new Date(stableTimeFromRef.current);
       const toDate = new Date(stableTimeToRef.current);
-      const from = fromDate.toISOString();
-      const to = toDate.toISOString();
 
       if (!isIncremental) {
         setLoading(true);
       }
 
       try {
-        let newMetrics: ContainerMetrics[] = [];
-        let totalAvailable = 0;
+        const newMetrics = await fetchMetricsViaDataSource(
+          dataSourceUid,
+          selectedFields,
+          fromDate,
+          toDate
+        );
 
-        // Data source mode - fetch via Grafana data source query API
-        if (useDataSource && dataSourceUid) {
-          try {
-            newMetrics = await fetchMetricsViaDataSource(
-              dataSourceUid,
-              selectedFields,
-              fromDate,
-              toDate
-            );
-            totalAvailable = newMetrics.length;
-          } catch (e) {
-            log('Effect:Metrics', `Error fetching from data source: ${e}`);
-            throw e;
-          }
-        } else {
-          // Panel proxy mode - fetch directly from agents
-          await Promise.all(
-            enabledHosts.map(async (host: HostConfig) => {
-              try {
-                const url = buildMetricsUrl(
-                  host.url,
-                  targetContainerIds,
-                  selectedFields,
-                  from,
-                  to,
-                  undefined, // no limit - get all data
-                  false
-                );
+        if (isCancelled) return;
 
-                const response = await proxyGet<MetricsResponse>(url);
-                // Only track totalAvailable from full fetches
-                if (!isIncremental) {
-                  totalAvailable += response.metadata.totalAvailable;
-                }
-                for (const metric of response.metrics) {
-                  newMetrics.push({
-                    ...metric,
-                    hostId: host.id,
-                    hostName: host.name,
-                  });
-                }
-              } catch (e) {
-                log('Effect:Metrics', `Error fetching from host ${host.url}: ${e}`);
-              }
-            })
-          );
-        }
-
-        if (isCancelled) {
-          log('Effect:Metrics', 'fetchAllMetrics cancelled after fetch');
-          return;
-        }
-
-        log('Effect:Metrics', `Fetched ${newMetrics.length} metrics, totalAvailable: ${totalAvailable}`);
-
-        // Only update totalAvailable from full fetches
         if (!isIncremental) {
-          totalAvailableRef.current = totalAvailable;
           setLoading(false);
           initialFetchDoneRef.current = true;
         }
@@ -1129,9 +664,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
         if (newMetrics.length > 0) {
           mergeMetrics(newMetrics);
         }
-
       } catch (err) {
-        log('Effect:Metrics', `fetchAllMetrics error: ${err}`);
         if (!isCancelled) {
           setError(err instanceof Error ? err.message : 'Failed to fetch metrics');
           setLoading(false);
@@ -1139,13 +672,9 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
       }
     };
 
-    // Initial full fetch
-    log('Effect:Metrics', 'Starting initial full fetch');
     fetchAllMetrics(false);
 
-    // Set up interval for incremental updates
     const refreshInterval = (options.refreshInterval || 10) * 1000;
-    log('Effect:Metrics', `Setting up interval with refreshInterval: ${refreshInterval}ms`);
     const interval = setInterval(() => {
       if (initialFetchDoneRef.current) {
         fetchAllMetrics(true);
@@ -1153,32 +682,13 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     }, refreshInterval);
 
     return () => {
-      log('Effect:Metrics', 'cleanup - cancelling and clearing interval');
       isCancelled = true;
       clearInterval(interval);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    // Use stable string keys instead of object references to prevent re-runs
-    // Note: Time range NOT included - accessed via refs to prevent re-runs when time changes
-    useDataSource,
-    dataSourceUid,
-    enabledHosts.map(h => h.id + h.url).join(','),
-    targetContainerIds.join(','),
-    options.showAllContainers,
-    options.refreshInterval,
-    selectedFields.join(','),
-  ]);
+  }, [metricsEffectKey]);
 
-  // Build host URL lookup
-  const hostUrlMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const host of hosts) {
-      map.set(host.id, host.url);
-    }
-    return map;
-  }, [hosts]);
-
+  // Group by container and host
   const containersByHost = useMemo(() => {
     const byContainer = new Map<string, ContainerWithMetrics>();
     const blacklist = options.containerBlacklist || [];
@@ -1194,7 +704,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           containerName: c.containerName,
           hostId: c.hostId,
           hostName: c.hostName,
-          hostUrl: hostUrlMap.get(c.hostId) || '',
           metrics: [],
           latest: null,
           rateData: new Map(),
@@ -1204,22 +713,20 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     }
 
     for (const m of allMetrics) {
-      // Only add metrics to containers that exist in the current containers list
-      // This prevents phantom containers from stale metrics cache
       const container = byContainer.get(m.containerId);
       if (container) {
         container.metrics.push(m);
       }
     }
 
-    // Sort metrics and calculate rates
+    // Sort and calculate rates
     for (const container of byContainer.values()) {
       if (container.metrics.length > 0) {
         container.metrics.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
         container.latest = container.metrics[container.metrics.length - 1];
 
         for (const metricDef of AVAILABLE_METRICS.filter((m) => m.isRate)) {
-          const rates = calculateRates(container.metrics, metricDef.key, metricDef.getValue);
+          const rates = calculateRates(container.metrics, metricDef.getValue);
           container.rateData.set(metricDef.key, rates);
           if (rates.length > 0) {
             container.latestRates.set(metricDef.key, rates[rates.length - 1]);
@@ -1228,14 +735,14 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
       }
     }
 
-    const byHost = new Map<string, { hostId: string; hostName: string; hostUrl: string; containers: ContainerWithMetrics[] }>();
+    // Group by host
+    const byHost = new Map<string, { hostId: string; hostName: string; containers: ContainerWithMetrics[] }>();
     for (const container of byContainer.values()) {
       const hostKey = container.hostId;
       if (!byHost.has(hostKey)) {
         byHost.set(hostKey, {
           hostId: container.hostId,
           hostName: container.hostName,
-          hostUrl: container.hostUrl,
           containers: [],
         });
       }
@@ -1247,12 +754,11 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     }
 
     return Array.from(byHost.values()).sort((a, b) => a.hostName.localeCompare(b.hostName));
-  }, [containers, allMetrics, options.showAllContainers, options.containerIds, options.containerBlacklist, hostUrlMap]);
+  }, [containers, allMetrics, options.showAllContainers, options.containerIds, options.containerBlacklist]);
 
   const totalContainers = containersByHost.reduce((sum, h) => sum + h.containers.length, 0);
   const totalHosts = containersByHost.length;
 
-  // Flatten all containers for strip mode (must be before early returns to satisfy React hooks rules)
   const allContainersFlat = useMemo(() => {
     return containersByHost.flatMap(host => host.containers);
   }, [containersByHost]);
@@ -1321,7 +827,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
         <div className={styles.info}>
           <p>Configuration:</p>
           <ul>
-            <li>Agents: {enabledHosts.length} enabled</li>
+            <li>Data Source: {dataSourceUid || 'Not selected'}</li>
             <li>Show All: {options.showAllContainers ? 'Yes' : 'No'}</li>
             <li>Selected: {(options.containerIds || []).length} containers</li>
           </ul>
@@ -1333,7 +839,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   if (loading && allMetrics.length === 0 && targetContainerIds.length > 0) {
     return (
       <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
-        <div className={styles.loading}>Loading metrics from {enabledHosts.length} agent(s)...</div>
+        <div className={styles.loading}>Loading metrics...</div>
       </div>
     );
   }
@@ -1345,8 +851,8 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           No containers to display.
           <br />
           <span style={{ fontSize: '11px' }}>
-            {enabledHosts.length === 0
-              ? 'Add and enable Docker Metrics Agents in panel options.'
+            {!dataSourceUid
+              ? 'Select a Docker Metrics data source in panel options.'
               : options.showAllContainers
                 ? 'Waiting for containers to be discovered...'
                 : 'Select containers in panel options or enable "Show All Containers".'}
@@ -1362,62 +868,29 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
         <div className={styles.emptyState}>
           No metrics selected.
           <br />
-          <span style={{ fontSize: '11px' }}>Select metrics to display in panel options under "Display".</span>
+          <span style={{ fontSize: '11px' }}>Select metrics to display in panel options under &quot;Display&quot;.</span>
         </div>
       </div>
     );
   }
 
-  // Render a single container card (extracted for reuse)
   const renderContainerCard = (container: ContainerWithMetrics) => {
-    const statusOverride = statusOverrides.get(container.containerId);
-    const isRunning = statusOverride?.isRunning ?? container.latest?.isRunning ?? false;
-    const isPaused = statusOverride?.isPaused ?? container.latest?.isPaused ?? false;
-    const pendingAction = pendingActions.get(container.containerId) || null;
+    const isRunning = container.latest?.isRunning ?? true;
+    const isPaused = container.latest?.isPaused ?? false;
 
-    // Determine status display - pending action takes precedence
-    const getStatusDisplay = () => {
-      if (pendingAction) {
-        return {
-          label: `⏳ ${PENDING_ACTION_LABELS[pendingAction.action]}`,
-          color: '#FF9830', // amber for pending
-        };
-      }
-      if (isPaused) {
-        return { label: '● Paused', color: '#FF9830' };
-      }
-      if (isRunning) {
-        return { label: '● Running', color: '#73BF69' };
-      }
-      return { label: '● Stopped', color: '#FF5555' };
-    };
-
-    const statusDisplay = getStatusDisplay();
-
-    // Determine card style based on container state
-    const getCardClass = () => {
-      if (pendingAction) {
-        return cx(styles.containerCard, styles.containerCardWarning);
-      }
-      if (isPaused) {
-        return cx(styles.containerCard, styles.containerCardWarning);
-      }
-      if (!isRunning) {
-        return cx(styles.containerCard, styles.containerCardStopped);
-      }
-      return styles.containerCard;
-    };
+    const statusDisplay = isPaused
+      ? { label: '● Paused', color: '#FF9830' }
+      : isRunning
+        ? { label: '● Running', color: '#73BF69' }
+        : { label: '● Stopped', color: '#FF5555' };
 
     return (
-      <div key={container.containerId} className={getCardClass()}>
+      <div key={container.containerId} className={styles.containerCard}>
         <div className={styles.containerHeader}>
           <span className={styles.containerName} title={container.containerName}>
             {container.containerName.replace(/^\//, '')}
           </span>
-          <span
-            className={styles.containerStatus}
-            style={{ color: statusDisplay.color }}
-          >
+          <span className={styles.containerStatus} style={{ color: statusDisplay.color }}>
             {statusDisplay.label}
           </span>
           {container.latest?.uptimeSeconds !== undefined && container.latest.uptimeSeconds > 0 && (
@@ -1426,31 +899,15 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
             </span>
           )}
         </div>
-
         <div className={styles.metricsGrid} style={metricsGridStyle}>
           {selectedMetricDefs.map((metricDef) => renderMetric(container, metricDef))}
         </div>
-
-        {effectiveEnableControls && container.hostUrl && (
-          <ContainerControls
-            hostUrl={container.hostUrl}
-            containerId={container.containerId}
-            isRunning={isRunning}
-            isPaused={isPaused}
-            styles={styles}
-            pendingAction={pendingAction}
-            onPendingStart={handlePendingStart}
-            onPendingComplete={handlePendingComplete}
-            onStatusUpdate={handleStatusUpdate}
-          />
-        )}
       </div>
     );
   };
 
-  // Strip mode: single grid with all containers, no host headers
+  // Strip mode
   if (options.stripMode) {
-    log('Render', 'Rendering in strip mode', { containerCount: allContainersFlat.length });
     return (
       <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
         <div className={styles.containersGrid} style={containerGridStyle}>
@@ -1460,21 +917,14 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     );
   }
 
-  // Normal mode: grouped by host with headers
+  // Normal mode
   return (
     <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
       <div className={styles.summary}>
-        <span>
-          {totalHosts} host{totalHosts !== 1 ? 's' : ''}
-        </span>
-        <span>
-          {totalContainers} container{totalContainers !== 1 ? 's' : ''}
-        </span>
+        <span>{totalHosts} host{totalHosts !== 1 ? 's' : ''}</span>
+        <span>{totalContainers} container{totalContainers !== 1 ? 's' : ''}</span>
         <span>{selectedMetricDefs.length} metrics</span>
-        <span>
-          {allMetrics.length}{totalAvailableRef.current > 0 ? `/${totalAvailableRef.current}` : ''} samples
-          {initialFetchDoneRef.current ? ' ✓' : ''}
-        </span>
+        <span>{allMetrics.length} samples</span>
       </div>
 
       {containersByHost.map((host) => (
@@ -1486,7 +936,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
               {host.containers.length} container{host.containers.length !== 1 ? 's' : ''}
             </span>
           </div>
-
           <div className={styles.containersGrid} style={containerGridStyle}>
             {host.containers.map(renderContainerCard)}
           </div>

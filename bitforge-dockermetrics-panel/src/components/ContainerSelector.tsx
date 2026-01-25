@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { css } from '@emotion/css';
-import { ContainerInfo, HostConfig } from '../types';
-import { proxyGet } from '../utils/proxy';
+import { ContainerInfo, DataSourceConfig } from '../types';
+import { getDataSourceSrv } from '@grafana/runtime';
+import { DataQueryRequest, dateTime } from '@grafana/data';
 
 interface ContainerSelectorProps {
-  hosts: HostConfig[];
+  dataSourceConfig: DataSourceConfig;
   selectedContainerIds: string[];
   blacklistedContainerIds: string[];
   showAllContainers: boolean;
@@ -62,9 +63,6 @@ const styles = {
       outline: none;
       border-color: rgba(255, 255, 255, 0.3);
     }
-    &:disabled {
-      opacity: 0.5;
-    }
   `,
   hostGroup: css`
     margin-bottom: 12px;
@@ -110,10 +108,6 @@ const styles = {
       background: rgba(50, 116, 217, 0.3);
     }
   `,
-  containerItemDisabled: css`
-    opacity: 0.5;
-    cursor: not-allowed;
-  `,
   containerName: css`
     flex: 1;
     font-size: 13px;
@@ -147,8 +141,77 @@ const styles = {
   `,
 };
 
+// Helper to convert Observable or Promise to Promise
+async function toPromise<T>(result: Promise<T> | { toPromise(): Promise<T> }): Promise<T> {
+  if ('toPromise' in result && typeof result.toPromise === 'function') {
+    return result.toPromise();
+  }
+  return result as Promise<T>;
+}
+
+async function fetchContainersViaDataSource(dataSourceUid: string): Promise<ContainerInfo[]> {
+  const srv = getDataSourceSrv();
+  const ds = await srv.get(dataSourceUid);
+
+  if (!ds || typeof ds.query !== 'function') {
+    throw new Error('Data source not found');
+  }
+
+  const now = new Date();
+  const request: DataQueryRequest = {
+    requestId: `containers-${Date.now()}`,
+    interval: '10s',
+    intervalMs: 10000,
+    range: {
+      from: dateTime(now.getTime() - 60000),
+      to: dateTime(now),
+      raw: { from: dateTime(now.getTime() - 60000), to: dateTime(now) },
+    },
+    scopedVars: {},
+    targets: [{
+      refId: 'A',
+      queryType: 'containers',
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }] as any,
+    timezone: 'browser',
+    app: 'panel',
+    startTime: Date.now(),
+  };
+
+  const response = await toPromise(ds.query(request));
+
+  if (!response || !response.data || response.data.length === 0) {
+    return [];
+  }
+
+  const frame = response.data[0];
+  const containers: ContainerInfo[] = [];
+
+  const containerIdField = frame.fields.find((f: { name: string }) => f.name === 'containerId');
+  const containerNameField = frame.fields.find((f: { name: string }) => f.name === 'containerName');
+  const hostNameField = frame.fields.find((f: { name: string }) => f.name === 'hostName');
+
+  if (!containerIdField || !containerNameField) {
+    return [];
+  }
+
+  for (let i = 0; i < frame.length; i++) {
+    containers.push({
+      hostId: hostNameField?.values[i] || 'default',
+      hostName: hostNameField?.values[i] || 'default',
+      containerId: containerIdField.values[i],
+      containerName: containerNameField.values[i],
+      state: 'running',
+      isRunning: true,
+      isPaused: false,
+    });
+  }
+
+  return containers;
+}
+
 export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
-  hosts,
+  dataSourceConfig,
   selectedContainerIds,
   blacklistedContainerIds,
   showAllContainers,
@@ -161,11 +224,10 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
-  const enabledHosts = useMemo(() => hosts.filter((h) => h.enabled), [hosts]);
+  const dataSourceUid = dataSourceConfig?.dataSourceUid || '';
 
-  // Fetch containers from all enabled hosts
   const fetchContainers = useCallback(async () => {
-    if (enabledHosts.length === 0) {
+    if (!dataSourceUid) {
       setContainers([]);
       return;
     }
@@ -174,33 +236,14 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
     setError(null);
 
     try {
-      const allContainers: ContainerInfo[] = [];
-
-      await Promise.all(
-        enabledHosts.map(async (host) => {
-          try {
-            const data = await proxyGet<Array<{ containerId: string; containerName: string; state: string; isRunning: boolean; isPaused: boolean }>>(`${host.url}/api/containers?all=true`);
-            // Add host info to each container
-            for (const container of data) {
-              allContainers.push({
-                ...container,
-                hostId: host.id,
-                hostName: host.name,
-              });
-            }
-          } catch {
-            // Ignore individual host errors
-          }
-        })
-      );
-
-      setContainers(allContainers);
+      const result = await fetchContainersViaDataSource(dataSourceUid);
+      setContainers(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch containers');
     } finally {
       setLoading(false);
     }
-  }, [enabledHosts]);
+  }, [dataSourceUid]);
 
   useEffect(() => {
     fetchContainers();
@@ -228,13 +271,11 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
 
   const toggleContainer = (containerId: string) => {
     if (showAllContainers) {
-      // In "show all" mode, toggle blacklist
       const newBlacklist = blacklistedContainerIds.includes(containerId)
         ? blacklistedContainerIds.filter((id) => id !== containerId)
         : [...blacklistedContainerIds, containerId];
       onBlacklistChange(newBlacklist);
     } else {
-      // In whitelist mode, toggle selection
       const newSelection = selectedContainerIds.includes(containerId)
         ? selectedContainerIds.filter((id) => id !== containerId)
         : [...selectedContainerIds, containerId];
@@ -246,7 +287,6 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
     const hostContainerIds = hostContainers.map((c) => c.containerId);
 
     if (showAllContainers) {
-      // In "show all" mode, toggle blacklist for all in host
       const allBlacklisted = hostContainerIds.every((id) => blacklistedContainerIds.includes(id));
       if (allBlacklisted) {
         onBlacklistChange(blacklistedContainerIds.filter((id) => !hostContainerIds.includes(id)));
@@ -255,7 +295,6 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
         onBlacklistChange(newBlacklist);
       }
     } else {
-      // In whitelist mode
       const allSelected = hostContainerIds.every((id) => selectedContainerIds.includes(id));
       if (allSelected) {
         onSelectionChange(selectedContainerIds.filter((id) => !hostContainerIds.includes(id)));
@@ -266,8 +305,8 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
     }
   };
 
-  if (enabledHosts.length === 0) {
-    return <div className={styles.emptyState}>Configure and enable agents first in the Agents section</div>;
+  if (!dataSourceUid) {
+    return <div className={styles.emptyState}>Configure a data source first in the Data Source section</div>;
   }
 
   return (
@@ -309,7 +348,7 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
       )}
 
       {!loading && containers.length === 0 && (
-        <div className={styles.emptyState}>No containers found on enabled agents</div>
+        <div className={styles.emptyState}>No containers found</div>
       )}
 
       <div className={styles.containerList}>

@@ -3,7 +3,7 @@ set -e
 
 # =============================================================================
 # Docker Metrics Release Script
-# Builds and releases both the collector (Docker image) and plugin (tar.gz)
+# Builds and releases the collector (Docker image), panel plugin, and data source plugin
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -63,10 +63,15 @@ check_prerequisites() {
 # Version management
 # =============================================================================
 get_current_versions() {
-    local plugin_version=$(grep -oP '"version":\s*"\K[^"]+' "${SCRIPT_DIR}/bitforge-dockermetrics-panel/package.json" | head -1)
+    local panel_version=$(grep -oP '"version":\s*"\K[^"]+' "${SCRIPT_DIR}/bitforge-dockermetrics-panel/package.json" | head -1)
+    local datasource_version=$(grep -oP '"version":\s*"\K[^"]+' "${SCRIPT_DIR}/bitforge-dockermetrics-datasource/package.json" | head -1)
     local agent_version=$(grep -oP 'AgentVersion = "\K[^"]+' "${SCRIPT_DIR}/docker-metrics-collector/DockerMetricsCollector/Program.cs" || echo "unknown")
 
-    echo "Plugin: ${plugin_version}, Agent: ${agent_version}"
+    echo "Panel: ${panel_version}, DataSource: ${datasource_version}, Agent: ${agent_version}"
+}
+
+get_base_version() {
+    grep -oP '"version":\s*"\K[^"]+' "${SCRIPT_DIR}/bitforge-dockermetrics-panel/package.json" | head -1 | sed 's/-.*$//'
 }
 
 update_versions() {
@@ -74,14 +79,18 @@ update_versions() {
 
     log_info "Updating versions to ${version}..."
 
-    # Update package.json (using sed for simple replacement)
-    local pkg_file="${SCRIPT_DIR}/bitforge-dockermetrics-panel/package.json"
-    sed -i 's/"version": "[^"]*"/"version": "'"${version}"'"/' "$pkg_file"
+    # Update panel package.json
+    local panel_pkg="${SCRIPT_DIR}/bitforge-dockermetrics-panel/package.json"
+    sed -i 's/"version": "[^"]*"/"version": "'"${version}"'"/' "$panel_pkg"
 
-    # Update version.ts for frontend display
-    local version_file="${SCRIPT_DIR}/bitforge-dockermetrics-panel/src/version.ts"
-    echo "// This file is auto-updated by release.sh" > "$version_file"
-    echo "export const PLUGIN_VERSION = '${version}';" >> "$version_file"
+    # Update panel version.ts
+    local panel_version_file="${SCRIPT_DIR}/bitforge-dockermetrics-panel/src/version.ts"
+    echo "// This file is auto-updated by release.sh" > "$panel_version_file"
+    echo "export const PLUGIN_VERSION = '${version}';" >> "$panel_version_file"
+
+    # Update datasource package.json
+    local ds_pkg="${SCRIPT_DIR}/bitforge-dockermetrics-datasource/package.json"
+    sed -i 's/"version": "[^"]*"/"version": "'"${version}"'"/' "$ds_pkg"
 
     # Update Program.cs AgentVersion
     local program_file="${SCRIPT_DIR}/docker-metrics-collector/DockerMetricsCollector/Program.cs"
@@ -122,10 +131,10 @@ push_docker_image() {
     log_success "Docker image pushed"
 }
 
-build_plugin() {
+build_panel_plugin() {
     local version="$1"
 
-    log_info "Building Grafana plugin..."
+    log_info "Building Panel plugin..."
 
     cd "${SCRIPT_DIR}/bitforge-dockermetrics-panel"
 
@@ -139,59 +148,99 @@ build_plugin() {
 
     # Verify frontend build succeeded
     if [ ! -f "dist/module.js" ]; then
-        log_error "Frontend build failed: dist/module.js not found"
+        log_error "Panel frontend build failed: dist/module.js not found"
         exit 1
     fi
 
-    # Build Go backend for production platforms only (linux)
-    log_info "Building backend binaries for production platforms..."
+    log_success "Panel plugin built (frontend only)"
 
-    # Download Go dependencies
-    go mod tidy >&2
-
-    # Build for linux/amd64 (most common for Grafana servers)
-    log_info "Building for linux/amd64..."
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" \
-        -o dist/gpx_bitforge_dockermetrics_panel_linux_amd64 \
-        ./pkg >&2
-
-    # Build for linux/arm64 (Raspberry Pi, ARM servers)
-    log_info "Building for linux/arm64..."
-    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-w -s" \
-        -o dist/gpx_bitforge_dockermetrics_panel_linux_arm64 \
-        ./pkg >&2
-
-    # Verify backend build succeeded
-    if [ ! -f "dist/gpx_bitforge_dockermetrics_panel_linux_amd64" ]; then
-        log_error "Backend build failed: linux_amd64 binary not found"
-        exit 1
-    fi
-
-    log_success "Backend binaries built"
-
-    # Create tar.gz with only production-essential files
+    # Create tar.gz
     local tar_name="bitforge-dockermetrics-panel-${version}.tar.gz"
     local tar_path="${SCRIPT_DIR}/dist/${tar_name}"
 
     mkdir -p "${SCRIPT_DIR}/dist"
 
-    # Create archive with only deployable files for Grafana
-    # Excludes: darwin/windows binaries (dev-only), source maps (debugging-only)
     local plugin_dist="${SCRIPT_DIR}/bitforge-dockermetrics-panel/dist"
     cd "${plugin_dist}"
 
-    log_info "Packaging plugin artifact (production files only)..."
+    log_info "Packaging panel plugin..."
+    tar -czvf "${tar_path}" \
+        --exclude="*.tar.gz" \
+        --exclude="*.map" \
+        . >&2
+    cd "${SCRIPT_DIR}/bitforge-dockermetrics-panel"
+
+    log_success "Panel plugin packaged: ${tar_path}"
+
+    echo "${tar_path}"
+}
+
+build_datasource_plugin() {
+    local version="$1"
+
+    log_info "Building Data Source plugin..."
+
+    cd "${SCRIPT_DIR}/bitforge-dockermetrics-datasource"
+
+    # Install npm dependencies if needed
+    if [ ! -d "node_modules" ]; then
+        npm install >&2
+    fi
+
+    # Build frontend
+    npm run build >&2
+
+    # Verify frontend build succeeded
+    if [ ! -f "dist/module.js" ]; then
+        log_error "DataSource frontend build failed: dist/module.js not found"
+        exit 1
+    fi
+
+    # Build Go backend for production platforms
+    log_info "Building backend binaries..."
+
+    go mod tidy >&2
+
+    # Build for linux/amd64
+    log_info "Building for linux/amd64..."
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" \
+        -o dist/gpx_bitforge_dockermetrics_datasource_linux_amd64 \
+        ./pkg >&2
+
+    # Build for linux/arm64
+    log_info "Building for linux/arm64..."
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-w -s" \
+        -o dist/gpx_bitforge_dockermetrics_datasource_linux_arm64 \
+        ./pkg >&2
+
+    # Verify backend build succeeded
+    if [ ! -f "dist/gpx_bitforge_dockermetrics_datasource_linux_amd64" ]; then
+        log_error "DataSource backend build failed"
+        exit 1
+    fi
+
+    log_success "DataSource plugin built"
+
+    # Create tar.gz
+    local tar_name="bitforge-dockermetrics-datasource-${version}.tar.gz"
+    local tar_path="${SCRIPT_DIR}/dist/${tar_name}"
+
+    mkdir -p "${SCRIPT_DIR}/dist"
+
+    local plugin_dist="${SCRIPT_DIR}/bitforge-dockermetrics-datasource/dist"
+    cd "${plugin_dist}"
+
+    log_info "Packaging datasource plugin..."
     tar -czvf "${tar_path}" \
         --exclude="*.tar.gz" \
         --exclude="*_darwin_*" \
         --exclude="*_windows_*" \
         --exclude="*.map" \
         . >&2
-    cd "${SCRIPT_DIR}/bitforge-dockermetrics-panel"
+    cd "${SCRIPT_DIR}/bitforge-dockermetrics-datasource"
 
-    log_success "Plugin built: ${tar_path}"
+    log_success "DataSource plugin packaged: ${tar_path}"
 
-    # Return the path (only this goes to stdout)
     echo "${tar_path}"
 }
 
@@ -200,8 +249,9 @@ build_plugin() {
 # =============================================================================
 create_release() {
     local version="$1"
-    local plugin_tar="$2"
-    local prerelease="$3"
+    local panel_tar="$2"
+    local datasource_tar="$3"
+    local prerelease="$4"
 
     log_info "Creating GitHub release v${version}..."
 
@@ -216,12 +266,12 @@ create_release() {
         log_warn "Git tag v${version} already exists"
     fi
 
-    # Build release notes to a temp file (avoids shell escaping issues)
+    # Build release notes
     local notes_file=$(mktemp)
     cat > "$notes_file" << NOTES_EOF
 ## Docker Metrics v${version}
 
-Monitor Docker containers directly in Grafana with real-time metrics and controls.
+Monitor Docker containers directly in Grafana with real-time metrics.
 
 ---
 
@@ -229,77 +279,17 @@ Monitor Docker containers directly in Grafana with real-time metrics and control
 
 | Component | Download |
 |-----------|----------|
-| **Grafana Plugin** | \`bitforge-dockermetrics-panel-${version}.tar.gz\` (below) |
+| **Panel Plugin** | \`bitforge-dockermetrics-panel-${version}.tar.gz\` |
+| **Data Source Plugin** | \`bitforge-dockermetrics-datasource-${version}.tar.gz\` |
 | **Docker Agent** | \`ghcr.io/${GITHUB_USER}/${IMAGE_NAME}:${version}\` |
 
-> **Note:** The source code archives (zip/tar.gz) are auto-generated by GitHub. For the Grafana plugin, download **\`bitforge-dockermetrics-panel-${version}.tar.gz\`** from the Assets section below.
+> **Note:** Download both plugin archives from the Assets section below.
 
 ---
 
 ## Installation
 
-### 1. Grafana Plugin
-
-Download \`bitforge-dockermetrics-panel-${version}.tar.gz\` and install:
-
-\`\`\`bash
-# Create plugin directory
-mkdir -p /var/lib/grafana/plugins/bitforge-dockermetrics-panel
-
-# Extract plugin (from the directory containing the tar.gz)
-tar -xzf bitforge-dockermetrics-panel-${version}.tar.gz -C /var/lib/grafana/plugins/bitforge-dockermetrics-panel
-
-# Set ownership (if needed)
-chown -R grafana:grafana /var/lib/grafana/plugins/bitforge-dockermetrics-panel
-\`\`\`
-
-Add to \`/etc/grafana/grafana.ini\`:
-\`\`\`ini
-[plugins]
-allow_loading_unsigned_plugins = bitforge-dockermetrics-panel
-\`\`\`
-
-Restart Grafana:
-\`\`\`bash
-systemctl restart grafana-server
-\`\`\`
-
-### 2. Docker Metrics Agent
-
-#### Option A: Docker Compose (recommended)
-
-Create \`docker-compose.yml\`:
-
-\`\`\`yaml
-services:
-  docker-metrics-agent:
-    image: ghcr.io/${GITHUB_USER}/${IMAGE_NAME}:${version}
-    container_name: docker-metrics-agent
-    restart: unless-stopped
-    ports:
-      - "5000:5000"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /sys/fs/cgroup:/sys/fs/cgroup:ro
-    group_add:
-      - \${DOCKER_GID:-999}
-    environment:
-      - PORT=5000
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/api/info"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-\`\`\`
-
-Run with:
-\`\`\`bash
-# Get docker group ID and start
-DOCKER_GID=\$(getent group docker | cut -d: -f3) docker compose up -d
-\`\`\`
-
-#### Option B: Docker CLI
+### 1. Docker Metrics Agent
 
 \`\`\`bash
 docker run -d \\
@@ -312,17 +302,25 @@ docker run -d \\
   ghcr.io/${GITHUB_USER}/${IMAGE_NAME}:${version}
 \`\`\`
 
-#### Verify
+### 2. Grafana Plugins
+
+Extract both plugins to your Grafana plugins directory:
 
 \`\`\`bash
-curl http://localhost:5000/api/info
+mkdir -p /var/lib/grafana/plugins/bitforge-dockermetrics-panel
+mkdir -p /var/lib/grafana/plugins/bitforge-dockermetrics-datasource
+
+tar -xzf bitforge-dockermetrics-panel-${version}.tar.gz -C /var/lib/grafana/plugins/bitforge-dockermetrics-panel
+tar -xzf bitforge-dockermetrics-datasource-${version}.tar.gz -C /var/lib/grafana/plugins/bitforge-dockermetrics-datasource
 \`\`\`
 
-### 3. Configure Panel
+Add to \`/etc/grafana/grafana.ini\`:
+\`\`\`ini
+[plugins]
+allow_loading_unsigned_plugins = bitforge-dockermetrics-panel,bitforge-dockermetrics-datasource
+\`\`\`
 
-1. Add a new panel in Grafana
-2. Select "Docker Metrics Panel" as visualization
-3. Go to panel options → Agents → Add your agent URL (e.g., \`http://docker-host:5000\`)
+Restart Grafana and configure the data source with your agent URL.
 
 ---
 
@@ -334,9 +332,9 @@ NOTES_EOF
     # Check if release exists
     if gh release view "v${version}" &>/dev/null; then
         log_warn "Release v${version} already exists, uploading assets..."
-        gh release upload "v${version}" "${plugin_tar}" --clobber
+        gh release upload "v${version}" "${panel_tar}" "${datasource_tar}" --clobber
     else
-        local gh_args=("v${version}" "${plugin_tar}" --title "Docker Metrics v${version}" --notes-file "$notes_file")
+        local gh_args=("v${version}" "${panel_tar}" "${datasource_tar}" --title "Docker Metrics v${version}" --notes-file "$notes_file")
         if [ "$prerelease" = "true" ]; then
             gh_args+=(--prerelease)
         fi
@@ -353,21 +351,23 @@ NOTES_EOF
 # =============================================================================
 usage() {
     cat <<EOF
-Usage: $0 [OPTIONS] <version>
+Usage: $0 [OPTIONS] [version]
 
 Options:
   -h, --help          Show this help message
-  -p, --prerelease    Mark as pre-release (for dev/testing)
+  -p, --prerelease    Mark as pre-release
   -s, --skip-push     Build only, don't push to registries
   -d, --docker-only   Only build and push Docker image
-  -g, --plugin-only   Only build and release plugin
+  -g, --plugin-only   Only build and release plugins
+  -D, --dev           Development release (auto-generates version: X.Y.Z-dev.TIMESTAMP)
   --no-version-bump   Don't update version numbers in source files
 
 Examples:
-  $0 1.1.0                    # Full release v1.1.0
-  $0 -p 1.1.0-beta.1          # Pre-release
-  $0 -s 1.1.0                 # Build only, no push
-  $0 -d 1.1.0                 # Docker image only
+  $0 1.3.0                    # Full release v1.3.0
+  $0 -D                       # Dev release with auto-generated version
+  $0 -p 1.3.0-beta.1          # Pre-release
+  $0 -s 1.3.0                 # Build only, no push
+  $0 -d 1.3.0                 # Docker image only
 
 Current versions: $(get_current_versions)
 EOF
@@ -380,6 +380,7 @@ main() {
     local docker_only="false"
     local plugin_only="false"
     local no_version_bump="false"
+    local dev_release="false"
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -404,6 +405,11 @@ main() {
                 plugin_only="true"
                 shift
                 ;;
+            -D|--dev)
+                dev_release="true"
+                prerelease="true"
+                shift
+                ;;
             --no-version-bump)
                 no_version_bump="true"
                 shift
@@ -420,14 +426,22 @@ main() {
         esac
     done
 
+    # Handle dev release version
+    if [ "$dev_release" = "true" ]; then
+        local base_version=$(get_base_version)
+        local timestamp=$(date +%Y%m%d.%H%M%S)
+        version="${base_version}-dev.${timestamp}"
+        log_info "Development release: ${version}"
+    fi
+
     # Validate version
     if [ -z "$version" ]; then
-        log_error "Version is required"
+        log_error "Version is required (or use -D for dev release)"
         usage
         exit 1
     fi
 
-    # Validate version format (semver)
+    # Validate version format
     if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
         log_error "Invalid version format: ${version}"
         log_info "Expected semver format: X.Y.Z or X.Y.Z-suffix"
@@ -447,7 +461,8 @@ main() {
         update_versions "$version"
     fi
 
-    local plugin_tar=""
+    local panel_tar=""
+    local datasource_tar=""
 
     # Build Docker image
     if [ "$plugin_only" != "true" ]; then
@@ -458,12 +473,13 @@ main() {
         fi
     fi
 
-    # Build plugin
+    # Build plugins
     if [ "$docker_only" != "true" ]; then
-        plugin_tar=$(build_plugin "$version")
+        panel_tar=$(build_panel_plugin "$version")
+        datasource_tar=$(build_datasource_plugin "$version")
 
         if [ "$skip_push" != "true" ]; then
-            create_release "$version" "$plugin_tar" "$prerelease"
+            create_release "$version" "$panel_tar" "$datasource_tar" "$prerelease"
         fi
     fi
 
@@ -477,8 +493,9 @@ main() {
     if [ "$plugin_only" != "true" ]; then
         echo "Docker image: ghcr.io/${GITHUB_USER}/${IMAGE_NAME}:${version}" >&2
     fi
-    if [ "$docker_only" != "true" ] && [ -n "$plugin_tar" ]; then
-        echo "Plugin:       ${plugin_tar}" >&2
+    if [ "$docker_only" != "true" ]; then
+        echo "Panel plugin: ${panel_tar}" >&2
+        echo "DataSource:   ${datasource_tar}" >&2
     fi
 
     if [ "$skip_push" != "true" ]; then
@@ -490,7 +507,7 @@ main() {
         log_info "Built locally (--skip-push). To push:"
         echo "  docker push ghcr.io/${GITHUB_USER}/${IMAGE_NAME}:${version}" >&2
         echo "  docker push ghcr.io/${GITHUB_USER}/${IMAGE_NAME}:latest" >&2
-        echo "  gh release create v${version} ${plugin_tar}" >&2
+        echo "  gh release create v${version} ${panel_tar} ${datasource_tar}" >&2
     else
         log_info "Next steps:"
         echo "  1. Verify release at GitHub" >&2
