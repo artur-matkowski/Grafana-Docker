@@ -1,3 +1,13 @@
+import { DataQuery } from '@grafana/data';
+
+// Custom query type for Docker Metrics data source
+export interface DockerMetricsQuery extends DataQuery {
+  queryType: 'metrics' | 'containers';
+  metrics?: string[];
+  containerIds?: string[];
+  containerNamePattern?: string;
+}
+
 // Container state enum - matches C# ContainerState
 // 'undefined' = never fetched properly (default)
 // 'invalid' = fetched but source was invalid (shows where propagation breaks)
@@ -70,30 +80,6 @@ export interface SimpleOptions {
   metricsPerRow: number;
   refreshInterval: number; // Refresh interval in seconds
   stripMode: boolean;               // Strip mode - hide host headers, show all containers in a single grid
-}
-
-// Progressive fetch stages
-export type FetchStage = 'initial' | 'recent' | 'history' | 'complete';
-
-// Fetch state for progressive loading
-export interface FetchState {
-  stage: FetchStage;
-  lastTimestamp: string | null;  // For incremental updates
-  loadedPoints: number;          // Points loaded so far
-}
-
-// Metadata about available metrics from the collector
-export interface MetricsMetadata {
-  totalAvailable: number;
-  availablePerContainer: Record<string, number>;
-  limitApplied: boolean;
-  timestamp: string;
-}
-
-// Wrapped metrics response from collector
-export interface MetricsResponse {
-  metrics: ContainerMetrics[];
-  metadata: MetricsMetadata;
 }
 
 // Container info for listing
@@ -273,3 +259,8 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
 
 // Default metrics to show
 export const DEFAULT_METRICS = ['cpuPercent', 'memoryBytes'];
+
+// Valid container states for validation
+export const VALID_CONTAINER_STATES: ContainerState[] = [
+  'undefined', 'invalid', 'created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead'
+];

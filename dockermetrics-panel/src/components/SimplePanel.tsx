@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { PanelProps, DataQueryRequest, DataFrameView, dateTime } from '@grafana/data';
-import { SimpleOptions, ContainerMetrics, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DataSourceConfig, ContainerState, getStateDisplay, isStateRunning, isStatePaused } from 'types';
+import { SimpleOptions, ContainerMetrics, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DataSourceConfig, ContainerState, getStateDisplay, DockerMetricsQuery } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 import { getDataSourceSrv } from '@grafana/runtime';
+import { toPromise, fetchContainersViaDataSource } from '../utils/datasource';
 
 // Format uptime seconds to human-readable string
 const formatUptime = (seconds: number): string => {
@@ -43,14 +44,6 @@ const METRIC_TO_FIELD: Record<string, string> = {
 
 interface Props extends PanelProps<SimpleOptions> {}
 
-// Helper to convert Observable or Promise to Promise
-async function toPromise<T>(result: Promise<T> | { toPromise(): Promise<T> }): Promise<T> {
-  if ('toPromise' in result && typeof result.toPromise === 'function') {
-    return result.toPromise();
-  }
-  return result as Promise<T>;
-}
-
 // Fetch metrics via data source query API
 async function fetchMetricsViaDataSource(
   dataSourceUid: string,
@@ -65,7 +58,7 @@ async function fetchMetricsViaDataSource(
     throw new Error('Data source not found or does not support queries');
   }
 
-  const request: DataQueryRequest = {
+  const request: DataQueryRequest<DockerMetricsQuery> = {
     requestId: `docker-metrics-${Date.now()}`,
     interval: '10s',
     intervalMs: 10000,
@@ -80,8 +73,7 @@ async function fetchMetricsViaDataSource(
       queryType: 'metrics',
       metrics: metrics,
       containerNamePattern: '',
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    }] as any,
+    }],
     timezone: 'browser',
     app: 'panel',
     startTime: Date.now(),
@@ -169,88 +161,6 @@ async function fetchMetricsViaDataSource(
   }
 
   return Array.from(metricsMap.values());
-}
-
-// Fetch container list via data source
-async function fetchContainersViaDataSource(dataSourceUid: string): Promise<ContainerInfo[]> {
-  const srv = getDataSourceSrv();
-  const ds = await srv.get(dataSourceUid);
-
-  if (!ds || typeof ds.query !== 'function') {
-    throw new Error('Data source not found or does not support queries');
-  }
-
-  const now = new Date();
-  const request: DataQueryRequest = {
-    requestId: `docker-containers-${Date.now()}`,
-    interval: '10s',
-    intervalMs: 10000,
-    range: {
-      from: dateTime(now.getTime() - 60000),
-      to: dateTime(now),
-      raw: { from: dateTime(now.getTime() - 60000), to: dateTime(now) },
-    },
-    scopedVars: {},
-    targets: [{
-      refId: 'A',
-      queryType: 'containers',
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    }] as any,
-    timezone: 'browser',
-    app: 'panel',
-    startTime: Date.now(),
-  };
-
-  const response = await toPromise(ds.query(request));
-
-  if (!response || !response.data || response.data.length === 0) {
-    return [];
-  }
-
-  const frame = response.data[0];
-  const containers: ContainerInfo[] = [];
-
-  const containerIdField = frame.fields.find((f: { name: string }) => f.name === 'containerId');
-  const containerNameField = frame.fields.find((f: { name: string }) => f.name === 'containerName');
-  const hostNameField = frame.fields.find((f: { name: string }) => f.name === 'hostName');
-
-  if (!containerIdField || !containerNameField) {
-    return [];
-  }
-
-  const stateField = frame.fields.find((f) => f.name === 'state');
-  const isRunningField = frame.fields.find((f) => f.name === 'isRunning');
-  const isPausedField = frame.fields.find((f) => f.name === 'isPaused');
-
-  // Valid container states (lowercase)
-  const validStates: ContainerState[] = ['undefined', 'invalid', 'created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead'];
-
-  for (let i = 0; i < frame.length; i++) {
-    const rawState = stateField?.values[i];
-    // Normalize to lowercase (C# JsonStringEnumConverter uses PascalCase by default)
-    const normalizedState = typeof rawState === 'string' ? rawState.toLowerCase() : rawState;
-    // Validate state - if undefined in source, mark as 'undefined', if invalid value mark as 'invalid'
-    let state: ContainerState = 'undefined';
-    if (normalizedState === undefined || normalizedState === null || normalizedState === '') {
-      state = 'undefined';
-    } else if (validStates.includes(normalizedState as ContainerState)) {
-      state = normalizedState as ContainerState;
-    } else {
-      state = 'invalid';
-    }
-
-    containers.push({
-      hostId: hostNameField?.values[i] || 'default',
-      hostName: hostNameField?.values[i] || 'default',
-      containerId: containerIdField.values[i],
-      containerName: containerNameField.values[i],
-      state,
-      isRunning: isRunningField?.values[i] ?? isStateRunning(state),
-      isPaused: isPausedField?.values[i] ?? isStatePaused(state),
-    });
-  }
-
-  return containers;
 }
 
 const getStyles = () => {
@@ -474,7 +384,7 @@ function calculateRates(
   metrics: ContainerMetrics[],
   getValue: (s: ContainerMetrics) => number | null
 ): number[] {
-  if (metrics.length < 2) return [];
+  if (metrics.length < 2) {return [];}
 
   const rates: number[] = [];
   for (let i = 1; i < metrics.length; i++) {
@@ -483,10 +393,10 @@ function calculateRates(
     const prevVal = getValue(prev);
     const currVal = getValue(curr);
 
-    if (prevVal === null || currVal === null) continue;
+    if (prevVal === null || currVal === null) {continue;}
 
     const timeDelta = (new Date(curr.timestamp).getTime() - new Date(prev.timestamp).getTime()) / 1000;
-    if (timeDelta <= 0) continue;
+    if (timeDelta <= 0) {continue;}
 
     const valueDelta = currVal - prevVal;
     const rate = valueDelta >= 0 ? valueDelta / timeDelta : 0;
@@ -659,7 +569,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     let isCancelled = false;
 
     const fetchAllMetrics = async (isIncremental: boolean) => {
-      if (isCancelled) return;
+      if (isCancelled) {return;}
 
       const fromDate = isIncremental && lastTimestampRef.current
         ? new Date(lastTimestampRef.current)
@@ -678,7 +588,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           toDate
         );
 
-        if (isCancelled) return;
+        if (isCancelled) {return;}
 
         if (!isIncremental) {
           setLoading(false);

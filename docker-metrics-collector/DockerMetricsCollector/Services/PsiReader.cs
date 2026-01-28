@@ -131,9 +131,9 @@ public class PsiReader
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Ignore search errors
+            _logger.LogDebug(ex, "Error searching for cgroup path for container {ContainerId}", containerId);
         }
 
         return null;
@@ -151,8 +151,9 @@ public class PsiReader
             var content = File.ReadAllText(path);
             return ParsePsiContent(content);
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogDebug(ex, "Failed to read PSI file {Path}", path);
             return null;
         }
     }
