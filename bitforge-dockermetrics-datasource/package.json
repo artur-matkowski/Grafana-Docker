@@ -1,6 +1,6 @@
 {
   "name": "bitforge-dockermetrics-datasource",
-  "version": "1.0.0",
+  "version": "1.2.22-dev.20260125.224931",
   "description": "Grafana data source for Docker Metrics Collector",
   "scripts": {
     "build": "webpack -c ./.config/webpack/webpack.config.ts --env production",
