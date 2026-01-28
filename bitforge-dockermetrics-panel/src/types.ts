@@ -65,7 +65,6 @@ export function getStateDisplay(state: ContainerState): { label: string; color: 
 
 // Data source configuration (required)
 export interface DataSourceConfig {
-  useDataSource: boolean;
   dataSourceUid?: string;
 }
 
@@ -89,9 +88,11 @@ export interface ContainerInfo {
   containerId: string;
   containerName: string;
   state: ContainerState;
+  healthStatus: ContainerHealthStatus;
   // Computed from state - kept for backward compatibility
   isRunning: boolean;
   isPaused: boolean;
+  isUnhealthy: boolean;
 }
 
 // PSI metrics
@@ -123,9 +124,11 @@ export interface ContainerMetrics {
   diskWriteBytes: number;
   uptimeSeconds: number;
   state: ContainerState;
-  // Computed from state - kept for backward compatibility
+  healthStatus: ContainerHealthStatus;
+  // Computed from state/health - kept for backward compatibility
   isRunning: boolean;
   isPaused: boolean;
+  isUnhealthy: boolean;
   cpuPressure: PsiMetrics | null;
   memoryPressure: PsiMetrics | null;
   ioPressure: PsiMetrics | null;
@@ -264,3 +267,41 @@ export const DEFAULT_METRICS = ['cpuPercent', 'memoryBytes'];
 export const VALID_CONTAINER_STATES: ContainerState[] = [
   'undefined', 'invalid', 'created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead'
 ];
+
+// Container health status - matches C# ContainerHealthStatus
+export type ContainerHealthStatus = 'none' | 'starting' | 'healthy' | 'unhealthy';
+
+// Valid health statuses for validation
+export const VALID_HEALTH_STATUSES: ContainerHealthStatus[] = [
+  'none', 'starting', 'healthy', 'unhealthy'
+];
+
+// Helper to check if health status is unhealthy
+export function isHealthUnhealthy(health: ContainerHealthStatus): boolean {
+  return health === 'unhealthy';
+}
+
+// Pulse type for container card visual indicator
+export type PulseType = 'red' | 'yellow' | 'none';
+
+// Get pulse type based on container state and health status
+export function getPulseType(state: ContainerState, healthStatus: ContainerHealthStatus): PulseType {
+  // Red: container not running
+  switch (state) {
+    case 'exited':
+    case 'dead':
+    case 'created':
+    case 'removing':
+    case 'undefined':
+    case 'invalid':
+    case 'restarting':
+      return 'red';
+    case 'paused':
+      return 'yellow';
+    case 'running':
+      // Yellow if unhealthy, none otherwise
+      return healthStatus === 'unhealthy' ? 'yellow' : 'none';
+    default:
+      return 'none';
+  }
+}

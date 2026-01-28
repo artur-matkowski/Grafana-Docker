@@ -332,32 +332,38 @@ func (d *Datasource) buildMetricFrames(allMetrics []metricsWithHost, requestedMe
 
 // metricDisplayName maps internal metric names to display names
 var metricDisplayNames = map[string]string{
-	"cpuPercent":      "CPU %",
-	"memoryBytes":     "Memory (MB)",
-	"memoryPercent":   "Memory %",
-	"networkRxBytes":  "Network RX (MB)",
-	"networkTxBytes":  "Network TX (MB)",
-	"diskReadBytes":   "Disk Read (MB)",
-	"diskWriteBytes":  "Disk Write (MB)",
-	"uptimeSeconds":   "Uptime (s)",
-	"cpuPressure":     "CPU Pressure",
-	"memoryPressure":  "Memory Pressure",
-	"ioPressure":      "I/O Pressure",
+	"cpuPercent":         "CPU %",
+	"memoryBytes":        "Memory (MB)",
+	"memoryPercent":      "Memory %",
+	"networkRxBytes":     "Network RX (MB)",
+	"networkTxBytes":     "Network TX (MB)",
+	"diskReadBytes":      "Disk Read (MB)",
+	"diskWriteBytes":     "Disk Write (MB)",
+	"uptimeSeconds":      "Uptime (s)",
+	"cpuPressureSome":    "CPU Pressure (some)",
+	"cpuPressureFull":    "CPU Pressure (full)",
+	"memoryPressureSome": "Memory Pressure (some)",
+	"memoryPressureFull": "Memory Pressure (full)",
+	"ioPressureSome":     "I/O Pressure (some)",
+	"ioPressureFull":     "I/O Pressure (full)",
 }
 
 // metricUnits maps internal metric names to units
 var metricUnits = map[string]string{
-	"cpuPercent":      "percent",
-	"memoryBytes":     "decmbytes",
-	"memoryPercent":   "percent",
-	"networkRxBytes":  "decmbytes",
-	"networkTxBytes":  "decmbytes",
-	"diskReadBytes":   "decmbytes",
-	"diskWriteBytes":  "decmbytes",
-	"uptimeSeconds":   "s",
-	"cpuPressure":     "percent",
-	"memoryPressure":  "percent",
-	"ioPressure":      "percent",
+	"cpuPercent":         "percent",
+	"memoryBytes":        "decmbytes",
+	"memoryPercent":      "percent",
+	"networkRxBytes":     "decmbytes",
+	"networkTxBytes":     "decmbytes",
+	"diskReadBytes":      "decmbytes",
+	"diskWriteBytes":     "decmbytes",
+	"uptimeSeconds":      "s",
+	"cpuPressureSome":    "percent",
+	"cpuPressureFull":    "percent",
+	"memoryPressureSome": "percent",
+	"memoryPressureFull": "percent",
+	"ioPressureSome":     "percent",
+	"ioPressureFull":     "percent",
 }
 
 // buildSingleMetricFrame creates a DataFrame for a single metric
@@ -392,17 +398,29 @@ func (d *Datasource) buildSingleMetricFrame(key containerKey, cd *containerData,
 			value = m.DiskWriteBytes / bytesToMB
 		case "uptimeSeconds":
 			value = m.UptimeSeconds
-		case "cpuPressure":
+		case "cpuPressureSome":
 			if m.CPUPressure != nil {
 				value = m.CPUPressure.Some10
 			}
-		case "memoryPressure":
+		case "cpuPressureFull":
+			if m.CPUPressure != nil {
+				value = m.CPUPressure.Full10
+			}
+		case "memoryPressureSome":
 			if m.MemoryPressure != nil {
 				value = m.MemoryPressure.Some10
 			}
-		case "ioPressure":
+		case "memoryPressureFull":
+			if m.MemoryPressure != nil {
+				value = m.MemoryPressure.Full10
+			}
+		case "ioPressureSome":
 			if m.IOPressure != nil {
 				value = m.IOPressure.Some10
+			}
+		case "ioPressureFull":
+			if m.IOPressure != nil {
+				value = m.IOPressure.Full10
 			}
 		default:
 			continue

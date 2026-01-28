@@ -4,7 +4,6 @@ import { Select, InlineField, Alert } from '@grafana/ui';
 import { getDataSourceSrv } from '@grafana/runtime';
 
 interface DataSourceOption {
-  useDataSource: boolean;
   dataSourceUid?: string;
 }
 
@@ -14,9 +13,7 @@ export const DataSourceEditor: React.FC<StandardEditorProps<DataSourceOption>> =
     const srv = getDataSourceSrv();
     const list = srv.getList({ pluginId: 'bitforge-dockermetrics-datasource' });
 
-    const options: Array<SelectableValue<string>> = [
-      { label: 'None (use panel proxy)', value: '' },
-    ];
+    const options: Array<SelectableValue<string>> = [];
 
     for (const ds of list) {
       options.push({
@@ -30,12 +27,10 @@ export const DataSourceEditor: React.FC<StandardEditorProps<DataSourceOption>> =
   }, []);
 
   const currentValue = value?.dataSourceUid || '';
-  const useDataSource = value?.useDataSource ?? false;
 
   const handleChange = (selected: SelectableValue<string>) => {
     const uid = selected?.value || '';
     onChange({
-      useDataSource: uid !== '',
       dataSourceUid: uid || undefined,
     });
   };
@@ -52,17 +47,16 @@ export const DataSourceEditor: React.FC<StandardEditorProps<DataSourceOption>> =
         />
       </InlineField>
 
-      {useDataSource && (
+      {currentValue && (
         <Alert title="Data Source Mode" severity="info" style={{ marginTop: 8 }}>
-          Metrics will be fetched via the data source. Container controls are disabled in this mode.
-          This enables the panel to work on public dashboards.
+          Metrics will be fetched via the data source. This enables the panel to work on public dashboards.
         </Alert>
       )}
 
-      {dataSourceOptions.length === 1 && (
+      {dataSourceOptions.length === 0 && (
         <Alert title="No Data Sources" severity="warning" style={{ marginTop: 8 }}>
           No Docker Metrics data sources found. Install and configure the &quot;bitforge-dockermetrics-datasource&quot;
-          plugin to enable public dashboard support.
+          plugin first.
         </Alert>
       )}
     </div>
