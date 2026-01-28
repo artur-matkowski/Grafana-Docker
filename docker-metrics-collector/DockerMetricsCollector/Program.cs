@@ -30,7 +30,7 @@ var app = builder.Build();
 // Enable CORS
 app.UseCors();
 
-const string AgentVersion = "1.2.16";
+const string AgentVersion = "1.2.22-dev.20260125.224931";
 
 // =====================
 // Health & Info Endpoints
