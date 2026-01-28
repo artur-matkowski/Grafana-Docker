@@ -195,15 +195,19 @@ async function fetchContainersViaDataSource(dataSourceUid: string): Promise<Cont
     return [];
   }
 
+  const stateField = frame.fields.find((f) => f.name === 'state');
+  const isRunningField = frame.fields.find((f) => f.name === 'isRunning');
+  const isPausedField = frame.fields.find((f) => f.name === 'isPaused');
+
   for (let i = 0; i < frame.length; i++) {
     containers.push({
       hostId: hostNameField?.values[i] || 'default',
       hostName: hostNameField?.values[i] || 'default',
       containerId: containerIdField.values[i],
       containerName: containerNameField.values[i],
-      state: 'running',
-      isRunning: true,
-      isPaused: false,
+      state: stateField?.values[i] || 'unknown',
+      isRunning: isRunningField?.values[i] ?? false,
+      isPaused: isPausedField?.values[i] ?? false,
     });
   }
 
