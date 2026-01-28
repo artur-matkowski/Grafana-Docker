@@ -59,6 +59,12 @@ Desktop.ini
 .claude/
 
 # =====================
+# Deployment
+# =====================
+scripts/.env
+scripts/.env.development
+
+# =====================
 # Misc
 # =====================
 *.tmp

@@ -66,7 +66,66 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/gpx_bitforge_dockermetric
 
 ---
 
-## Production Deployment
+## Remote Deployment (SSH/SCP)
+
+The `scripts/deploy.sh` script automates deployment to remote servers via SSH.
+
+### Setup
+
+```bash
+# Configure for production
+cp scripts/.env.example scripts/.env
+# Edit scripts/.env with your production server details
+
+# Configure for development
+cp scripts/.env.example scripts/.env.development
+# Edit scripts/.env.development with your dev server details
+```
+
+**Configuration options in `.env`:**
+
+| Variable | Description |
+|----------|-------------|
+| `SSH_HOST` | SSH connection string (e.g., `user@server.com`) |
+| `GRAFANA_PLUGINS_PATH` | Remote path to Grafana plugins directory |
+| `AGENT_PATH` | Remote path for agent deployment |
+| `GRAFANA_CONTAINER` | Grafana container name to restart |
+| `AGENT_CONTAINER` | Agent container name (optional) |
+| `DOCKER_REGISTRY` | Docker image registry |
+| `SSH_KEY` | Path to SSH key (optional) |
+| `SSH_PORT` | SSH port (default: 22) |
+
+### Usage
+
+```bash
+# Deploy all components to production (build first)
+./scripts/deploy.sh -b production
+
+# Deploy all to development
+./scripts/deploy.sh -b dev
+
+# Deploy only plugins
+./scripts/deploy.sh -c plugins -b production
+
+# Deploy only panel
+./scripts/deploy.sh -c panel production
+
+# Deploy only agent
+./scripts/deploy.sh -c agent production
+
+# Dry run (show commands without executing)
+./scripts/deploy.sh -n production
+```
+
+The script will:
+1. Build components (with `-b` flag)
+2. Copy archives to remote via SCP
+3. Extract and set ownership to `472:472` (Grafana user)
+4. Restart Grafana container
+
+---
+
+## Manual Production Deployment
 
 ### 1. Deploy Collector Agent
 
@@ -80,13 +139,6 @@ export DOCKER_GID=$(getent group docker | cut -d: -f3)
 export VERSION=v1.2.22  # or desired version
 
 docker compose -f docker-compose.agent.yml up -d
-```
-
-Or use the deployment script:
-
-```bash
-cd docker-metrics-collector
-./deploy.sh <GITHUB_USER> <VERSION>
 ```
 
 **Environment Variables:**
