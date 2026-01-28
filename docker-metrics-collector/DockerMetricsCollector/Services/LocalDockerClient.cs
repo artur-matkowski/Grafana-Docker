@@ -186,8 +186,9 @@ public class LocalDockerClient
 
             return 0;
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogDebug(ex, "Failed to get uptime for container {ContainerId}", containerId);
             return 0;
         }
     }
@@ -214,8 +215,9 @@ public class LocalDockerClient
 
             return new ContainerStatus(containerId, name, status, running, paused);
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogDebug(ex, "Failed to get status for container {ContainerId}", containerId);
             return null;
         }
     }
@@ -354,8 +356,9 @@ public class LocalDockerClient
                 IoPressure: ioPsi
             );
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogDebug(ex, "Failed to parse stats for container {ContainerId}", containerId);
             return null;
         }
     }
@@ -394,6 +397,7 @@ public class LocalDockerClient
         }
         catch
         {
+            // Return 0 on parse errors - CPU stats may have incomplete data during container startup
             return 0;
         }
     }

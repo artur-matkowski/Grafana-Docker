@@ -186,44 +186,40 @@ app.MapGet("/api/metrics/latest", (MetricsCache cache) =>
 // Container Control Endpoints
 // =====================
 
+// Helper for container action responses
+static IResult HandleContainerAction(string action, bool success, string? error, string containerId) =>
+    success
+        ? Results.Ok(new { success = true, action, containerId })
+        : Results.BadRequest(new { success = false, error });
+
 app.MapPost("/api/containers/{containerId}/start", async (LocalDockerClient docker, string containerId) =>
 {
     var (success, error) = await docker.StartContainerAsync(containerId);
-    if (success)
-        return Results.Ok(new { success = true, action = "start", containerId });
-    return Results.BadRequest(new { success = false, error });
+    return HandleContainerAction("start", success, error, containerId);
 });
 
 app.MapPost("/api/containers/{containerId}/stop", async (LocalDockerClient docker, string containerId) =>
 {
     var (success, error) = await docker.StopContainerAsync(containerId);
-    if (success)
-        return Results.Ok(new { success = true, action = "stop", containerId });
-    return Results.BadRequest(new { success = false, error });
+    return HandleContainerAction("stop", success, error, containerId);
 });
 
 app.MapPost("/api/containers/{containerId}/restart", async (LocalDockerClient docker, string containerId) =>
 {
     var (success, error) = await docker.RestartContainerAsync(containerId);
-    if (success)
-        return Results.Ok(new { success = true, action = "restart", containerId });
-    return Results.BadRequest(new { success = false, error });
+    return HandleContainerAction("restart", success, error, containerId);
 });
 
 app.MapPost("/api/containers/{containerId}/pause", async (LocalDockerClient docker, string containerId) =>
 {
     var (success, error) = await docker.PauseContainerAsync(containerId);
-    if (success)
-        return Results.Ok(new { success = true, action = "pause", containerId });
-    return Results.BadRequest(new { success = false, error });
+    return HandleContainerAction("pause", success, error, containerId);
 });
 
 app.MapPost("/api/containers/{containerId}/unpause", async (LocalDockerClient docker, string containerId) =>
 {
     var (success, error) = await docker.UnpauseContainerAsync(containerId);
-    if (success)
-        return Results.Ok(new { success = true, action = "unpause", containerId });
-    return Results.BadRequest(new { success = false, error });
+    return HandleContainerAction("unpause", success, error, containerId);
 });
 
 // =====================

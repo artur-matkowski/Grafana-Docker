@@ -1,22 +1,31 @@
 import React from 'react';
-import { StandardEditorProps } from '@grafana/data';
+import { StandardEditorProps, StandardEditorContext } from '@grafana/data';
 import { SimpleOptions } from '../types';
 import { ContainerSelector } from './ContainerSelector';
 
-export const ContainerSelectorEditor: React.FC<StandardEditorProps<string[], any, SimpleOptions>> = ({
+// Extended context type that includes onOptionsChange (available at runtime but not in base types)
+interface ExtendedEditorContext extends StandardEditorContext<SimpleOptions> {
+  onOptionsChange?: (options: SimpleOptions) => void;
+}
+
+type ContainerSelectorEditorProps = Omit<StandardEditorProps<string[], unknown, SimpleOptions>, 'context'> & {
+  context: ExtendedEditorContext;
+};
+
+export const ContainerSelectorEditor: React.FC<ContainerSelectorEditorProps> = ({
   value,
   onChange,
   context,
 }) => {
   const handleShowAllChange = (showAll: boolean) => {
-    if (context.options && typeof (context as any).onOptionsChange === 'function') {
-      (context as any).onOptionsChange({ ...context.options, showAllContainers: showAll });
+    if (context.options && context.onOptionsChange) {
+      context.onOptionsChange({ ...context.options, showAllContainers: showAll });
     }
   };
 
   const handleBlacklistChange = (containerIds: string[]) => {
-    if (context.options && typeof (context as any).onOptionsChange === 'function') {
-      (context as any).onOptionsChange({ ...context.options, containerBlacklist: containerIds });
+    if (context.options && context.onOptionsChange) {
+      context.onOptionsChange({ ...context.options, containerBlacklist: containerIds });
     }
   };
 

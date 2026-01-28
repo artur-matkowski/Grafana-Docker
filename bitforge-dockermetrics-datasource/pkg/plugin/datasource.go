@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -164,10 +165,7 @@ type PSIMetrics struct {
 
 // MetricsResponse from the Docker agent
 type MetricsResponse struct {
-	Metrics  []ContainerMetric `json:"metrics"`
-	Metadata struct {
-		TotalAvailable int `json:"totalAvailable"`
-	} `json:"metadata"`
+	Metrics []ContainerMetric `json:"metrics"`
 }
 
 // queryMetrics fetches metrics from Docker agents and returns DataFrames
@@ -260,7 +258,10 @@ func (d *Datasource) fetchMetricsFromHost(ctx context.Context, host HostConfig, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("unexpected status %d (failed to read body: %w)", resp.StatusCode, err)
+		}
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -576,12 +577,14 @@ func (d *Datasource) CheckHealth(ctx context.Context, req *backend.CheckHealthRe
 			lastError = fmt.Sprintf("%s: %v", host.Name, err)
 			continue
 		}
+
+		statusCode := resp.StatusCode
 		resp.Body.Close()
 
-		if resp.StatusCode == http.StatusOK {
+		if statusCode == http.StatusOK {
 			healthyHosts++
 		} else {
-			lastError = fmt.Sprintf("%s: status %d", host.Name, resp.StatusCode)
+			lastError = fmt.Sprintf("%s: status %d", host.Name, statusCode)
 		}
 	}
 
@@ -617,14 +620,9 @@ func contains(slice []string, item string) bool {
 }
 
 func sortMetricsByTime(metrics []ContainerMetric) {
-	// Simple bubble sort - metrics are usually already sorted
-	for i := 0; i < len(metrics)-1; i++ {
-		for j := 0; j < len(metrics)-i-1; j++ {
-			t1, _ := time.Parse(time.RFC3339, metrics[j].Timestamp)
-			t2, _ := time.Parse(time.RFC3339, metrics[j+1].Timestamp)
-			if t1.After(t2) {
-				metrics[j], metrics[j+1] = metrics[j+1], metrics[j]
-			}
-		}
-	}
+	sort.Slice(metrics, func(i, j int) bool {
+		t1, _ := time.Parse(time.RFC3339, metrics[i].Timestamp)
+		t2, _ := time.Parse(time.RFC3339, metrics[j].Timestamp)
+		return t1.Before(t2)
+	})
 }
