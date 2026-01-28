@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { PanelProps, DataQueryRequest, DataFrameView, dateTime } from '@grafana/data';
-import { SimpleOptions, ContainerMetrics, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DataSourceConfig, ContainerState, getStateDisplay, DockerMetricsQuery } from 'types';
-import { css, cx } from '@emotion/css';
+import { SimpleOptions, ContainerMetrics, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DataSourceConfig, ContainerState, ContainerHealthStatus, getStateDisplay, getPulseType, DockerMetricsQuery } from 'types';
+import { css, cx, keyframes } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 import { getDataSourceSrv } from '@grafana/runtime';
 import { toPromise, fetchContainersViaDataSource } from '../utils/datasource';
@@ -34,13 +34,40 @@ const METRIC_TO_FIELD: Record<string, string> = {
   networkTxBytes: 'networkTxBytes',
   diskReadBytes: 'diskReadBytes',
   diskWriteBytes: 'diskWriteBytes',
-  cpuPressureSome: 'cpuPressure',
-  cpuPressureFull: 'cpuPressure',
-  memoryPressureSome: 'memoryPressure',
-  memoryPressureFull: 'memoryPressure',
-  ioPressureSome: 'ioPressure',
-  ioPressureFull: 'ioPressure',
+  cpuPressureSome: 'cpuPressureSome',
+  cpuPressureFull: 'cpuPressureFull',
+  memoryPressureSome: 'memoryPressureSome',
+  memoryPressureFull: 'memoryPressureFull',
+  ioPressureSome: 'ioPressureSome',
+  ioPressureFull: 'ioPressureFull',
 };
+
+// Pulsating animation keyframes for container status indicators
+const pulseRedKeyframes = keyframes`
+  0%, 100% {
+    border-color: rgba(255, 85, 85, 0.3);
+    box-shadow: 0 0 0 0 rgba(255, 85, 85, 0);
+    background: rgba(255, 85, 85, 0.04);
+  }
+  50% {
+    border-color: rgba(255, 85, 85, 0.8);
+    box-shadow: 0 0 8px 2px rgba(255, 85, 85, 0.3);
+    background: rgba(255, 85, 85, 0.08);
+  }
+`;
+
+const pulseYellowKeyframes = keyframes`
+  0%, 100% {
+    border-color: rgba(255, 152, 48, 0.3);
+    box-shadow: 0 0 0 0 rgba(255, 152, 48, 0);
+    background: rgba(255, 152, 48, 0.04);
+  }
+  50% {
+    border-color: rgba(255, 152, 48, 0.8);
+    box-shadow: 0 0 8px 2px rgba(255, 152, 48, 0.3);
+    background: rgba(255, 152, 48, 0.08);
+  }
+`;
 
 interface Props extends PanelProps<SimpleOptions> {}
 
@@ -129,8 +156,10 @@ async function fetchMetricsViaDataSource(
           diskWriteBytes: 0,
           uptimeSeconds: 0,
           state: 'undefined' as ContainerState,
+          healthStatus: 'none' as ContainerHealthStatus,
           isRunning: false,
           isPaused: false,
+          isUnhealthy: false,
           cpuPressure: null,
           memoryPressure: null,
           ioPressure: null,
@@ -156,6 +185,24 @@ async function fetchMetricsViaDataSource(
         metric.diskWriteBytes = value * 1024 * 1024;
       } else if (fieldName.includes('Uptime') || fieldName === 'uptimeSeconds') {
         metric.uptimeSeconds = value;
+      } else if (fieldName === 'cpuPressureSome' || fieldName.includes('CPU Pressure (some)')) {
+        metric.cpuPressure = metric.cpuPressure || { some10: 0, some60: 0, some300: 0, full10: 0, full60: 0, full300: 0 };
+        metric.cpuPressure.some10 = value;
+      } else if (fieldName === 'cpuPressureFull' || fieldName.includes('CPU Pressure (full)')) {
+        metric.cpuPressure = metric.cpuPressure || { some10: 0, some60: 0, some300: 0, full10: 0, full60: 0, full300: 0 };
+        metric.cpuPressure.full10 = value;
+      } else if (fieldName === 'memoryPressureSome' || fieldName.includes('Memory Pressure (some)')) {
+        metric.memoryPressure = metric.memoryPressure || { some10: 0, some60: 0, some300: 0, full10: 0, full60: 0, full300: 0 };
+        metric.memoryPressure.some10 = value;
+      } else if (fieldName === 'memoryPressureFull' || fieldName.includes('Memory Pressure (full)')) {
+        metric.memoryPressure = metric.memoryPressure || { some10: 0, some60: 0, some300: 0, full10: 0, full60: 0, full300: 0 };
+        metric.memoryPressure.full10 = value;
+      } else if (fieldName === 'ioPressureSome' || fieldName.includes('I/O Pressure (some)')) {
+        metric.ioPressure = metric.ioPressure || { some10: 0, some60: 0, some300: 0, full10: 0, full60: 0, full300: 0 };
+        metric.ioPressure.some10 = value;
+      } else if (fieldName === 'ioPressureFull' || fieldName.includes('I/O Pressure (full)')) {
+        metric.ioPressure = metric.ioPressure || { some10: 0, some60: 0, some300: 0, full10: 0, full60: 0, full300: 0 };
+        metric.ioPressure.full10 = value;
       }
     }
   }
@@ -221,6 +268,22 @@ const getStyles = () => {
       border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 6px;
       padding: 12px;
+    `,
+    containerCardPulseRed: css`
+      animation: ${pulseRedKeyframes} 1.2s ease-in-out infinite;
+      @media (prefers-reduced-motion: reduce) {
+        animation: none;
+        border-color: rgba(255, 85, 85, 0.6);
+        background: rgba(255, 85, 85, 0.06);
+      }
+    `,
+    containerCardPulseYellow: css`
+      animation: ${pulseYellowKeyframes} 1.2s ease-in-out infinite;
+      @media (prefers-reduced-motion: reduce) {
+        animation: none;
+        border-color: rgba(255, 152, 48, 0.6);
+        background: rgba(255, 152, 48, 0.06);
+      }
     `,
     containerHeader: css`
       display: flex;
@@ -371,8 +434,10 @@ interface ContainerWithMetrics {
   hostId: string;
   hostName: string;
   state: ContainerState;
+  healthStatus: ContainerHealthStatus;
   isRunning: boolean;
   isPaused: boolean;
+  isUnhealthy: boolean;
   metrics: ContainerMetrics[];
   latest: ContainerMetrics | null;
   rateData: Map<string, number[]>;
@@ -420,7 +485,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   const styles = useStyles2(getStyles);
 
   // Data source config
-  const dataSourceConfig: DataSourceConfig = options.dataSourceConfig || { useDataSource: false };
+  const dataSourceConfig: DataSourceConfig = options.dataSourceConfig || {};
   const dataSourceUid = dataSourceConfig.dataSourceUid || '';
 
   const containerGridStyle = {
@@ -639,8 +704,10 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           hostId: c.hostId,
           hostName: c.hostName,
           state: c.state,
+          healthStatus: c.healthStatus,
           isRunning: c.isRunning,
           isPaused: c.isPaused,
+          isUnhealthy: c.isUnhealthy,
           metrics: [],
           latest: null,
           rateData: new Map(),
@@ -814,10 +881,18 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   const renderContainerCard = (container: ContainerWithMetrics) => {
     // Use container state from container info (from /api/containers), fallback to latest metrics state
     const state: ContainerState = container.state ?? container.latest?.state ?? 'undefined';
+    const healthStatus: ContainerHealthStatus = container.healthStatus ?? container.latest?.healthStatus ?? 'none';
     const statusDisplay = getStateDisplay(state);
+    const pulseType = getPulseType(state, healthStatus);
+
+    const cardClassName = cx(
+      styles.containerCard,
+      pulseType === 'red' && styles.containerCardPulseRed,
+      pulseType === 'yellow' && styles.containerCardPulseYellow
+    );
 
     return (
-      <div key={container.containerId} className={styles.containerCard}>
+      <div key={container.containerId} className={cardClassName}>
         <div className={styles.containerHeader}>
           <span className={styles.containerName} title={container.containerName}>
             {container.containerName.replace(/^\//, '')}
