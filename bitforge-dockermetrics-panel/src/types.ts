@@ -1,3 +1,58 @@
+// Container state enum - matches C# ContainerState
+// 'undefined' = never fetched properly (default)
+// 'invalid' = fetched but source was invalid (shows where propagation breaks)
+export type ContainerState =
+  | 'undefined'   // Never fetched properly - default value
+  | 'invalid'     // Fetched but source was invalid - shows where propagation breaks
+  | 'created'     // Container created but not started
+  | 'running'     // Container is running
+  | 'paused'      // Container is paused
+  | 'restarting'  // Container is restarting
+  | 'removing'    // Container is being removed
+  | 'exited'      // Container has exited/stopped
+  | 'dead';       // Container is dead (failed to stop gracefully)
+
+// Helper to check if state indicates running
+export function isStateRunning(state: ContainerState): boolean {
+  return state === 'running';
+}
+
+// Helper to check if state indicates paused
+export function isStatePaused(state: ContainerState): boolean {
+  return state === 'paused';
+}
+
+// Helper to check if state indicates active (running or paused)
+export function isStateActive(state: ContainerState): boolean {
+  return state === 'running' || state === 'paused';
+}
+
+// Get display info for container state
+export function getStateDisplay(state: ContainerState): { label: string; color: string } {
+  switch (state) {
+    case 'running':
+      return { label: '● Running', color: '#73BF69' };
+    case 'paused':
+      return { label: '● Paused', color: '#FF9830' };
+    case 'exited':
+      return { label: '● Exited', color: '#FF5555' };
+    case 'created':
+      return { label: '● Created', color: '#8AB8FF' };
+    case 'restarting':
+      return { label: '● Restarting', color: '#FFCB46' };
+    case 'removing':
+      return { label: '● Removing', color: '#FF9830' };
+    case 'dead':
+      return { label: '● Dead', color: '#FF5555' };
+    case 'undefined':
+      return { label: '○ Undefined', color: '#8e8e8e' };
+    case 'invalid':
+      return { label: '⚠ Invalid', color: '#FF5555' };
+    default:
+      return { label: '? Unknown', color: '#8e8e8e' };
+  }
+}
+
 // Data source configuration (required)
 export interface DataSourceConfig {
   useDataSource: boolean;
@@ -47,7 +102,8 @@ export interface ContainerInfo {
   hostName: string;
   containerId: string;
   containerName: string;
-  state: string;
+  state: ContainerState;
+  // Computed from state - kept for backward compatibility
   isRunning: boolean;
   isPaused: boolean;
 }
@@ -80,6 +136,8 @@ export interface ContainerMetrics {
   diskReadBytes: number;
   diskWriteBytes: number;
   uptimeSeconds: number;
+  state: ContainerState;
+  // Computed from state - kept for backward compatibility
   isRunning: boolean;
   isPaused: boolean;
   cpuPressure: PsiMetrics | null;

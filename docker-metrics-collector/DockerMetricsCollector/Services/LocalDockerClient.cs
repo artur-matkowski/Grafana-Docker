@@ -86,14 +86,13 @@ public class LocalDockerClient
                 var id = container.GetProperty("Id").GetString() ?? "";
                 var names = container.GetProperty("Names").EnumerateArray()
                     .FirstOrDefault().GetString() ?? "";
-                var state = container.GetProperty("State").GetString() ?? "";
+                var stateStr = container.GetProperty("State").GetString();
+                var state = ContainerStateExtensions.ParseDockerState(stateStr);
 
                 result.Add(new ContainerInfo(
                     ContainerId: id,
                     ContainerName: names,
-                    State: state,
-                    IsRunning: state.Equals("running", StringComparison.OrdinalIgnoreCase),
-                    IsPaused: state.Equals("paused", StringComparison.OrdinalIgnoreCase)
+                    State: state
                 ));
             }
 
@@ -109,11 +108,8 @@ public class LocalDockerClient
     /// <summary>
     /// Get metrics for a specific container including PSI.
     /// </summary>
-    public async Task<ContainerMetrics?> GetContainerMetricsAsync(string containerId, string containerName, string state)
+    public async Task<ContainerMetrics?> GetContainerMetricsAsync(string containerId, string containerName, ContainerState state)
     {
-        var isRunning = state.Equals("running", StringComparison.OrdinalIgnoreCase);
-        var isPaused = state.Equals("paused", StringComparison.OrdinalIgnoreCase);
-
         // Get PSI metrics from cgroups
         var (cpuPsi, memoryPsi, ioPsi) = _psiReader.GetContainerPsi(containerId);
 
@@ -121,7 +117,7 @@ public class LocalDockerClient
         var uptimeSeconds = await GetContainerUptimeAsync(containerId);
 
         // For paused containers, return minimal metrics with PSI
-        if (isPaused)
+        if (state.IsPaused())
         {
             return new ContainerMetrics(
                 ContainerId: containerId,
@@ -135,8 +131,7 @@ public class LocalDockerClient
                 DiskReadBytes: 0,
                 DiskWriteBytes: 0,
                 UptimeSeconds: uptimeSeconds,
-                IsRunning: true,
-                IsPaused: true,
+                State: state,
                 CpuPressure: cpuPsi,
                 MemoryPressure: memoryPsi,
                 IoPressure: ioPsi
@@ -285,7 +280,7 @@ public class LocalDockerClient
     private ContainerMetrics? ParseContainerStats(
         string containerId,
         string containerName,
-        string state,
+        ContainerState state,
         JsonElement stats,
         long uptimeSeconds,
         PsiMetrics? cpuPsi,
@@ -341,9 +336,6 @@ public class LocalDockerClient
                 }
             }
 
-            var isRunning = state.Equals("running", StringComparison.OrdinalIgnoreCase);
-            var isPaused = state.Equals("paused", StringComparison.OrdinalIgnoreCase);
-
             return new ContainerMetrics(
                 ContainerId: containerId,
                 ContainerName: containerName,
@@ -356,8 +348,7 @@ public class LocalDockerClient
                 DiskReadBytes: diskRead,
                 DiskWriteBytes: diskWrite,
                 UptimeSeconds: uptimeSeconds,
-                IsRunning: isRunning || isPaused,
-                IsPaused: isPaused,
+                State: state,
                 CpuPressure: cpuPsi,
                 MemoryPressure: memoryPsi,
                 IoPressure: ioPsi

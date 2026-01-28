@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { css } from '@emotion/css';
-import { ContainerInfo, DataSourceConfig } from '../types';
+import { ContainerInfo, DataSourceConfig, ContainerState, isStateRunning, isStatePaused } from '../types';
 import { getDataSourceSrv } from '@grafana/runtime';
 import { DataQueryRequest, dateTime } from '@grafana/data';
 
@@ -199,15 +199,29 @@ async function fetchContainersViaDataSource(dataSourceUid: string): Promise<Cont
   const isRunningField = frame.fields.find((f) => f.name === 'isRunning');
   const isPausedField = frame.fields.find((f) => f.name === 'isPaused');
 
+  // Valid container states
+  const validStates: ContainerState[] = ['undefined', 'invalid', 'created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead'];
+
   for (let i = 0; i < frame.length; i++) {
+    const rawState = stateField?.values[i];
+    // Validate state - if undefined in source, mark as 'undefined', if invalid value mark as 'invalid'
+    let state: ContainerState = 'undefined';
+    if (rawState === undefined || rawState === null || rawState === '') {
+      state = 'undefined';
+    } else if (validStates.includes(rawState as ContainerState)) {
+      state = rawState as ContainerState;
+    } else {
+      state = 'invalid';
+    }
+
     containers.push({
       hostId: hostNameField?.values[i] || 'default',
       hostName: hostNameField?.values[i] || 'default',
       containerId: containerIdField.values[i],
       containerName: containerNameField.values[i],
-      state: stateField?.values[i] || 'unknown',
-      isRunning: isRunningField?.values[i] ?? false,
-      isPaused: isPausedField?.values[i] ?? false,
+      state,
+      isRunning: isRunningField?.values[i] ?? isStateRunning(state),
+      isPaused: isPausedField?.values[i] ?? isStatePaused(state),
     });
   }
 
