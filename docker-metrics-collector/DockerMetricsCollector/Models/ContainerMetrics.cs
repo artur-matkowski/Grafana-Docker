@@ -1,4 +1,79 @@
+using System.Text.Json.Serialization;
+
 namespace DockerMetricsAgent.Models;
+
+/// <summary>
+/// Container state enum with failure markers for debugging propagation issues.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum ContainerState
+{
+    /// <summary>Never fetched properly - default value.</summary>
+    Undefined = 0,
+    /// <summary>Fetched but source was invalid - shows where propagation breaks.</summary>
+    Invalid,
+    /// <summary>Container created but not started.</summary>
+    Created,
+    /// <summary>Container is running.</summary>
+    Running,
+    /// <summary>Container is paused.</summary>
+    Paused,
+    /// <summary>Container is restarting.</summary>
+    Restarting,
+    /// <summary>Container is being removed.</summary>
+    Removing,
+    /// <summary>Container has exited/stopped.</summary>
+    Exited,
+    /// <summary>Container is dead (failed to stop gracefully).</summary>
+    Dead
+}
+
+/// <summary>
+/// Helper methods for ContainerState.
+/// </summary>
+public static class ContainerStateExtensions
+{
+    /// <summary>
+    /// Parse Docker API state string to ContainerState enum.
+    /// </summary>
+    public static ContainerState ParseDockerState(string? state)
+    {
+        if (string.IsNullOrEmpty(state))
+            return ContainerState.Undefined;
+
+        return state.ToLowerInvariant() switch
+        {
+            "created" => ContainerState.Created,
+            "running" => ContainerState.Running,
+            "paused" => ContainerState.Paused,
+            "restarting" => ContainerState.Restarting,
+            "removing" => ContainerState.Removing,
+            "exited" => ContainerState.Exited,
+            "dead" => ContainerState.Dead,
+            "undefined" => ContainerState.Undefined,
+            "invalid" => ContainerState.Invalid,
+            _ => ContainerState.Invalid // Unknown state from Docker = Invalid
+        };
+    }
+
+    /// <summary>
+    /// Check if container is in a running state.
+    /// </summary>
+    public static bool IsRunning(this ContainerState state) =>
+        state == ContainerState.Running;
+
+    /// <summary>
+    /// Check if container is paused.
+    /// </summary>
+    public static bool IsPaused(this ContainerState state) =>
+        state == ContainerState.Paused;
+
+    /// <summary>
+    /// Check if container is in an active state (running or paused).
+    /// </summary>
+    public static bool IsActive(this ContainerState state) =>
+        state == ContainerState.Running || state == ContainerState.Paused;
+}
 
 /// <summary>
 /// Container metrics snapshot including PSI (Pressure Stall Information).
@@ -19,14 +94,18 @@ public record ContainerMetrics(
     long UptimeSeconds,
 
     // Container state
-    bool IsRunning,
-    bool IsPaused,
+    ContainerState State,
 
     // PSI metrics (null if not available)
     PsiMetrics? CpuPressure,
     PsiMetrics? MemoryPressure,
     PsiMetrics? IoPressure
-);
+)
+{
+    // Computed properties for backward compatibility
+    public bool IsRunning => State.IsRunning();
+    public bool IsPaused => State.IsPaused();
+}
 
 /// <summary>
 /// PSI (Pressure Stall Information) metrics.
@@ -47,10 +126,12 @@ public record PsiMetrics(
 public record ContainerInfo(
     string ContainerId,
     string ContainerName,
-    string State,
-    bool IsRunning,
-    bool IsPaused
-);
+    ContainerState State
+)
+{
+    public bool IsRunning => State.IsRunning();
+    public bool IsPaused => State.IsPaused();
+}
 
 /// <summary>
 /// Real-time container status.
