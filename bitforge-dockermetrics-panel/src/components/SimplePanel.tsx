@@ -222,17 +222,19 @@ async function fetchContainersViaDataSource(dataSourceUid: string): Promise<Cont
   const isRunningField = frame.fields.find((f) => f.name === 'isRunning');
   const isPausedField = frame.fields.find((f) => f.name === 'isPaused');
 
-  // Valid container states
+  // Valid container states (lowercase)
   const validStates: ContainerState[] = ['undefined', 'invalid', 'created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead'];
 
   for (let i = 0; i < frame.length; i++) {
     const rawState = stateField?.values[i];
+    // Normalize to lowercase (C# JsonStringEnumConverter uses PascalCase by default)
+    const normalizedState = typeof rawState === 'string' ? rawState.toLowerCase() : rawState;
     // Validate state - if undefined in source, mark as 'undefined', if invalid value mark as 'invalid'
     let state: ContainerState = 'undefined';
-    if (rawState === undefined || rawState === null || rawState === '') {
+    if (normalizedState === undefined || normalizedState === null || normalizedState === '') {
       state = 'undefined';
-    } else if (validStates.includes(rawState as ContainerState)) {
-      state = rawState as ContainerState;
+    } else if (validStates.includes(normalizedState as ContainerState)) {
+      state = normalizedState as ContainerState;
     } else {
       state = 'invalid';
     }
