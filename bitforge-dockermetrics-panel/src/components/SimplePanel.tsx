@@ -136,7 +136,7 @@ async function fetchMetricsViaDataSource(
           diskReadBytes: 0,
           diskWriteBytes: 0,
           uptimeSeconds: 0,
-          isRunning: true,
+          isRunning: false,
           isPaused: false,
           cpuPressure: null,
           memoryPressure: null,
@@ -217,15 +217,19 @@ async function fetchContainersViaDataSource(dataSourceUid: string): Promise<Cont
     return [];
   }
 
+  const stateField = frame.fields.find((f) => f.name === 'state');
+  const isRunningField = frame.fields.find((f) => f.name === 'isRunning');
+  const isPausedField = frame.fields.find((f) => f.name === 'isPaused');
+
   for (let i = 0; i < frame.length; i++) {
     containers.push({
       hostId: hostNameField?.values[i] || 'default',
       hostName: hostNameField?.values[i] || 'default',
       containerId: containerIdField.values[i],
       containerName: containerNameField.values[i],
-      state: 'running',
-      isRunning: true,
-      isPaused: false,
+      state: stateField?.values[i] || 'unknown',
+      isRunning: isRunningField?.values[i] ?? false,
+      isPaused: isPausedField?.values[i] ?? false,
     });
   }
 
@@ -875,8 +879,9 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   }
 
   const renderContainerCard = (container: ContainerWithMetrics) => {
-    const isRunning = container.latest?.isRunning ?? true;
-    const isPaused = container.latest?.isPaused ?? false;
+    // Use container info status first (from /api/containers), fallback to latest metrics
+    const isRunning = container.isRunning ?? container.latest?.isRunning ?? false;
+    const isPaused = container.isPaused ?? container.latest?.isPaused ?? false;
 
     const statusDisplay = isPaused
       ? { label: '● Paused', color: '#FF9830' }
