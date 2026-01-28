@@ -468,6 +468,9 @@ func (d *Datasource) queryContainers(ctx context.Context, qm QueryModel) backend
 	containerIDs := make([]string, 0)
 	containerNames := make([]string, 0)
 	hostNames := make([]string, 0)
+	states := make([]string, 0)
+	isRunningList := make([]bool, 0)
+	isPausedList := make([]bool, 0)
 
 	for _, host := range hosts {
 		containers, err := d.fetchContainersFromHost(ctx, host)
@@ -483,6 +486,9 @@ func (d *Datasource) queryContainers(ctx context.Context, qm QueryModel) backend
 			containerIDs = append(containerIDs, c.ContainerID)
 			containerNames = append(containerNames, c.ContainerName)
 			hostNames = append(hostNames, host.Name)
+			states = append(states, c.State)
+			isRunningList = append(isRunningList, c.IsRunning)
+			isPausedList = append(isPausedList, c.IsPaused)
 		}
 	}
 
@@ -491,6 +497,9 @@ func (d *Datasource) queryContainers(ctx context.Context, qm QueryModel) backend
 		data.NewField("containerId", nil, containerIDs),
 		data.NewField("containerName", nil, containerNames),
 		data.NewField("hostName", nil, hostNames),
+		data.NewField("state", nil, states),
+		data.NewField("isRunning", nil, isRunningList),
+		data.NewField("isPaused", nil, isPausedList),
 	)
 
 	response.Frames = append(response.Frames, frame)
