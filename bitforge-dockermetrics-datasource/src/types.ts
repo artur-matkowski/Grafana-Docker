@@ -57,9 +57,12 @@ export const AVAILABLE_METRICS = [
   { value: 'diskReadBytes', label: 'Disk Read (MB)' },
   { value: 'diskWriteBytes', label: 'Disk Write (MB)' },
   { value: 'uptimeSeconds', label: 'Uptime (seconds)' },
-  { value: 'cpuPressure', label: 'CPU Pressure (PSI)' },
-  { value: 'memoryPressure', label: 'Memory Pressure (PSI)' },
-  { value: 'ioPressure', label: 'I/O Pressure (PSI)' },
+  { value: 'cpuPressureSome', label: 'CPU Pressure' },
+  { value: 'cpuPressureFull', label: 'CPU Pressure (full)' },
+  { value: 'memoryPressureSome', label: 'Memory Pressure' },
+  { value: 'memoryPressureFull', label: 'Memory Pressure (full)' },
+  { value: 'ioPressureSome', label: 'I/O Pressure' },
+  { value: 'ioPressureFull', label: 'I/O Pressure (full)' },
 ] as const;
 
 /**
