@@ -1,6 +1,6 @@
 {
   "name": "docker-metrics-panel",
-  "version": "1.2.22",
+  "version": "1.2.22-dev.20260125.224931",
   "scripts": {
     "build": "webpack -c ./.config/webpack/webpack.config.ts --env production",
     "dev": "webpack -w -c ./.config/webpack/webpack.config.ts --env development",
