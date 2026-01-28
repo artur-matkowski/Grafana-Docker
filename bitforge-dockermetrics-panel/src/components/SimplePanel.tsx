@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { PanelProps, DataQueryRequest, DataFrameView, dateTime } from '@grafana/data';
-import { SimpleOptions, ContainerMetrics, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DataSourceConfig } from 'types';
+import { SimpleOptions, ContainerMetrics, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DataSourceConfig, ContainerState, getStateDisplay, isStateRunning, isStatePaused } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 import { getDataSourceSrv } from '@grafana/runtime';
@@ -136,6 +136,7 @@ async function fetchMetricsViaDataSource(
           diskReadBytes: 0,
           diskWriteBytes: 0,
           uptimeSeconds: 0,
+          state: 'undefined' as ContainerState,
           isRunning: false,
           isPaused: false,
           cpuPressure: null,
@@ -221,15 +222,29 @@ async function fetchContainersViaDataSource(dataSourceUid: string): Promise<Cont
   const isRunningField = frame.fields.find((f) => f.name === 'isRunning');
   const isPausedField = frame.fields.find((f) => f.name === 'isPaused');
 
+  // Valid container states
+  const validStates: ContainerState[] = ['undefined', 'invalid', 'created', 'running', 'paused', 'restarting', 'removing', 'exited', 'dead'];
+
   for (let i = 0; i < frame.length; i++) {
+    const rawState = stateField?.values[i];
+    // Validate state - if undefined in source, mark as 'undefined', if invalid value mark as 'invalid'
+    let state: ContainerState = 'undefined';
+    if (rawState === undefined || rawState === null || rawState === '') {
+      state = 'undefined';
+    } else if (validStates.includes(rawState as ContainerState)) {
+      state = rawState as ContainerState;
+    } else {
+      state = 'invalid';
+    }
+
     containers.push({
       hostId: hostNameField?.values[i] || 'default',
       hostName: hostNameField?.values[i] || 'default',
       containerId: containerIdField.values[i],
       containerName: containerNameField.values[i],
-      state: stateField?.values[i] || 'unknown',
-      isRunning: isRunningField?.values[i] ?? false,
-      isPaused: isPausedField?.values[i] ?? false,
+      state,
+      isRunning: isRunningField?.values[i] ?? isStateRunning(state),
+      isPaused: isPausedField?.values[i] ?? isStatePaused(state),
     });
   }
 
@@ -443,6 +458,9 @@ interface ContainerWithMetrics {
   containerName: string;
   hostId: string;
   hostName: string;
+  state: ContainerState;
+  isRunning: boolean;
+  isPaused: boolean;
   metrics: ContainerMetrics[];
   latest: ContainerMetrics | null;
   rateData: Map<string, number[]>;
@@ -708,6 +726,9 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           containerName: c.containerName,
           hostId: c.hostId,
           hostName: c.hostName,
+          state: c.state,
+          isRunning: c.isRunning,
+          isPaused: c.isPaused,
           metrics: [],
           latest: null,
           rateData: new Map(),
@@ -879,15 +900,9 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   }
 
   const renderContainerCard = (container: ContainerWithMetrics) => {
-    // Use container info status first (from /api/containers), fallback to latest metrics
-    const isRunning = container.isRunning ?? container.latest?.isRunning ?? false;
-    const isPaused = container.isPaused ?? container.latest?.isPaused ?? false;
-
-    const statusDisplay = isPaused
-      ? { label: '● Paused', color: '#FF9830' }
-      : isRunning
-        ? { label: '● Running', color: '#73BF69' }
-        : { label: '● Stopped', color: '#FF5555' };
+    // Use container state from container info (from /api/containers), fallback to latest metrics state
+    const state: ContainerState = container.state ?? container.latest?.state ?? 'undefined';
+    const statusDisplay = getStateDisplay(state);
 
     return (
       <div key={container.containerId} className={styles.containerCard}>
