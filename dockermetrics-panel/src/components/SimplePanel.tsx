@@ -1,10 +1,9 @@
-import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import { PanelProps, DataQueryRequest, dateTime, DataFrame, FieldType } from '@grafana/data';
-import { SimpleOptions, ContainerMetrics, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, DataSourceConfig, ContainerState, ContainerHealthStatus, getStateDisplay, getPulseType, DockerMetricsQuery } from 'types';
+import React, { useMemo } from 'react';
+import { PanelProps, DataFrame, FieldType } from '@grafana/data';
+import { SimpleOptions, ContainerMetrics, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, ContainerState, ContainerHealthStatus, getStateDisplay, getPulseType } from 'types';
 import { css, cx, keyframes } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
-import { getDataSourceSrv } from '@grafana/runtime';
-import { toPromise, normalizeContainerState, normalizeHealthStatus, isStateRunning, isStatePaused, isHealthUnhealthy } from '../utils/datasource';
+import { normalizeContainerState, normalizeHealthStatus, isStateRunning, isStatePaused, isHealthUnhealthy } from '../utils/datasource';
 
 // Format uptime seconds to human-readable string
 const formatUptime = (seconds: number): string => {
@@ -23,23 +22,6 @@ const formatUptime = (seconds: number): string => {
   const days = Math.floor(hours / 24);
   const remainingHours = hours % 24;
   return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
-};
-
-// Map metric keys to API field names
-const METRIC_TO_FIELD: Record<string, string> = {
-  cpuPercent: 'cpuPercent',
-  memoryBytes: 'memoryBytes',
-  memoryPercent: 'memoryPercent',
-  networkRxBytes: 'networkRxBytes',
-  networkTxBytes: 'networkTxBytes',
-  diskReadBytes: 'diskReadBytes',
-  diskWriteBytes: 'diskWriteBytes',
-  cpuPressureSome: 'cpuPressureSome',
-  cpuPressureFull: 'cpuPressureFull',
-  memoryPressureSome: 'memoryPressureSome',
-  memoryPressureFull: 'memoryPressureFull',
-  ioPressureSome: 'ioPressureSome',
-  ioPressureFull: 'ioPressureFull',
 };
 
 // Pulsating animation keyframes for container status indicators
@@ -203,227 +185,6 @@ function parseMetricsFromDataFrames(frames: DataFrame[]): ContainerMetrics[] {
   }
 
   return Array.from(metricsMap.values());
-}
-
-// Parse metrics from DataFrame format (for direct data source queries - internal format)
-function parseMetricsFromFrames(frames: Array<{
-  fields: Array<{ name: string; type: string; labels?: Record<string, string>; values: unknown[] }>;
-  length: number;
-}>): ContainerMetrics[] {
-  const metricsMap = new Map<string, ContainerMetrics>();
-
-  for (const frame of frames) {
-    if (!frame.fields || frame.fields.length < 2) {
-      continue;
-    }
-
-    const timeField = frame.fields.find((f) => f.type === 'time');
-    const valueField = frame.fields.find((f) => f.type === 'number');
-
-    if (!timeField || !valueField) {
-      continue;
-    }
-
-    const labels = valueField.labels || {};
-    const containerId = labels.containerId || '';
-    const containerName = labels.containerName || '';
-    const hostName = labels.hostName || 'default';
-    const fieldName = valueField.name || '';
-
-    for (let i = 0; i < frame.length; i++) {
-      const timestamp = new Date(timeField.values[i] as number).toISOString();
-      const value = valueField.values[i] as number;
-
-      const key = `${containerId}:${timestamp}`;
-      if (!metricsMap.has(key)) {
-        metricsMap.set(key, {
-          hostId: hostName,
-          hostName: hostName,
-          containerId,
-          containerName,
-          timestamp,
-          cpuPercent: 0,
-          memoryBytes: 0,
-          memoryPercent: 0,
-          networkRxBytes: 0,
-          networkTxBytes: 0,
-          diskReadBytes: 0,
-          diskWriteBytes: 0,
-          uptimeSeconds: 0,
-          state: 'undefined' as ContainerState,
-          healthStatus: 'none' as ContainerHealthStatus,
-          isRunning: false,
-          isPaused: false,
-          isUnhealthy: false,
-          cpuPressure: null,
-          memoryPressure: null,
-          ioPressure: null,
-        });
-      }
-
-      const metric = metricsMap.get(key)!;
-
-      // Map display names back to metric keys
-      if (fieldName.includes('CPU %') || fieldName === 'cpuPercent') {
-        metric.cpuPercent = value;
-      } else if (fieldName.includes('Memory (MB)') || fieldName === 'memoryBytes') {
-        metric.memoryBytes = value * 1024 * 1024;
-      } else if (fieldName.includes('Memory %') || fieldName === 'memoryPercent') {
-        metric.memoryPercent = value;
-      } else if (fieldName.includes('Network RX') || fieldName === 'networkRxBytes') {
-        metric.networkRxBytes = value * 1024 * 1024;
-      } else if (fieldName.includes('Network TX') || fieldName === 'networkTxBytes') {
-        metric.networkTxBytes = value * 1024 * 1024;
-      } else if (fieldName.includes('Disk Read') || fieldName === 'diskReadBytes') {
-        metric.diskReadBytes = value * 1024 * 1024;
-      } else if (fieldName.includes('Disk Write') || fieldName === 'diskWriteBytes') {
-        metric.diskWriteBytes = value * 1024 * 1024;
-      } else if (fieldName.includes('Uptime') || fieldName === 'uptimeSeconds') {
-        metric.uptimeSeconds = value;
-      } else if (fieldName === 'cpuPressureSome' || fieldName.includes('CPU Pressure (some)')) {
-        metric.cpuPressure = metric.cpuPressure || { some10: 0, some60: 0, some300: 0, full10: 0, full60: 0, full300: 0 };
-        metric.cpuPressure.some10 = value;
-      } else if (fieldName === 'cpuPressureFull' || fieldName.includes('CPU Pressure (full)')) {
-        metric.cpuPressure = metric.cpuPressure || { some10: 0, some60: 0, some300: 0, full10: 0, full60: 0, full300: 0 };
-        metric.cpuPressure.full10 = value;
-      } else if (fieldName === 'memoryPressureSome' || fieldName.includes('Memory Pressure (some)')) {
-        metric.memoryPressure = metric.memoryPressure || { some10: 0, some60: 0, some300: 0, full10: 0, full60: 0, full300: 0 };
-        metric.memoryPressure.some10 = value;
-      } else if (fieldName === 'memoryPressureFull' || fieldName.includes('Memory Pressure (full)')) {
-        metric.memoryPressure = metric.memoryPressure || { some10: 0, some60: 0, some300: 0, full10: 0, full60: 0, full300: 0 };
-        metric.memoryPressure.full10 = value;
-      } else if (fieldName === 'ioPressureSome' || fieldName.includes('I/O Pressure (some)')) {
-        metric.ioPressure = metric.ioPressure || { some10: 0, some60: 0, some300: 0, full10: 0, full60: 0, full300: 0 };
-        metric.ioPressure.some10 = value;
-      } else if (fieldName === 'ioPressureFull' || fieldName.includes('I/O Pressure (full)')) {
-        metric.ioPressure = metric.ioPressure || { some10: 0, some60: 0, some300: 0, full10: 0, full60: 0, full300: 0 };
-        metric.ioPressure.full10 = value;
-      }
-    }
-  }
-
-  return Array.from(metricsMap.values());
-}
-
-// Fetch metrics via direct data source query API (for authenticated dashboards without queries configured)
-async function fetchMetricsDirectly(
-  dataSourceUid: string,
-  metrics: string[],
-  from: Date,
-  to: Date
-): Promise<ContainerMetrics[]> {
-  const srv = getDataSourceSrv();
-  const ds = await srv.get(dataSourceUid);
-
-  if (!ds || typeof ds.query !== 'function') {
-    throw new Error('Data source not found or does not support queries');
-  }
-
-  const request: DataQueryRequest<DockerMetricsQuery> = {
-    requestId: `docker-metrics-${Date.now()}`,
-    interval: '10s',
-    intervalMs: 10000,
-    range: {
-      from: dateTime(from),
-      to: dateTime(to),
-      raw: { from: dateTime(from), to: dateTime(to) },
-    },
-    scopedVars: {},
-    targets: [{
-      refId: 'A',
-      queryType: 'metrics',
-      metrics: metrics,
-      containerNamePattern: '',
-    }],
-    timezone: 'browser',
-    app: 'panel',
-    startTime: Date.now(),
-  };
-
-  const response = await toPromise(ds.query(request));
-
-  if (!response || !response.data) {
-    return [];
-  }
-
-  return parseMetricsFromFrames(response.data);
-}
-
-// Fetch containers via direct data source query API (for authenticated dashboards without queries configured)
-async function fetchContainersDirectly(dataSourceUid: string): Promise<ContainerInfo[]> {
-  const srv = getDataSourceSrv();
-  const ds = await srv.get(dataSourceUid);
-
-  if (!ds || typeof ds.query !== 'function') {
-    throw new Error('Data source not found or does not support queries');
-  }
-
-  const now = new Date();
-  const request: DataQueryRequest<DockerMetricsQuery> = {
-    requestId: `containers-${Date.now()}`,
-    interval: '10s',
-    intervalMs: 10000,
-    range: {
-      from: dateTime(now.getTime() - 60000),
-      to: dateTime(now),
-      raw: { from: dateTime(now.getTime() - 60000), to: dateTime(now) },
-    },
-    scopedVars: {},
-    targets: [{
-      refId: 'A',
-      queryType: 'containers',
-    }],
-    timezone: 'browser',
-    app: 'panel',
-    startTime: Date.now(),
-  };
-
-  const response = await toPromise(ds.query(request));
-
-  if (!response || !response.data || response.data.length === 0) {
-    return [];
-  }
-
-  // Parse container data from the response frame
-  const frame = response.data[0];
-  const containers: ContainerInfo[] = [];
-
-  const containerIdField = frame.fields.find((f: { name: string }) => f.name === 'containerId');
-  const containerNameField = frame.fields.find((f: { name: string }) => f.name === 'containerName');
-  const hostNameField = frame.fields.find((f: { name: string }) => f.name === 'hostName');
-  const stateField = frame.fields.find((f: { name: string }) => f.name === 'state');
-  const healthStatusField = frame.fields.find((f: { name: string }) => f.name === 'healthStatus');
-  const isRunningField = frame.fields.find((f: { name: string }) => f.name === 'isRunning');
-  const isPausedField = frame.fields.find((f: { name: string }) => f.name === 'isPaused');
-  const isUnhealthyField = frame.fields.find((f: { name: string }) => f.name === 'isUnhealthy');
-
-  if (!containerIdField || !containerNameField) {
-    return [];
-  }
-
-  for (let i = 0; i < frame.length; i++) {
-    const state = normalizeContainerState(stateField?.values[i]);
-    const healthStatus = normalizeHealthStatus(healthStatusField?.values[i]);
-
-    containers.push({
-      hostId: (hostNameField?.values[i] as string) || 'default',
-      hostName: (hostNameField?.values[i] as string) || 'default',
-      containerId: containerIdField.values[i] as string,
-      containerName: containerNameField.values[i] as string,
-      state,
-      healthStatus,
-      isRunning: (isRunningField?.values[i] as boolean) ?? isStateRunning(state),
-      isPaused: (isPausedField?.values[i] as boolean) ?? isStatePaused(state),
-      isUnhealthy: (isUnhealthyField?.values[i] as boolean) ?? isHealthUnhealthy(healthStatus),
-    });
-  }
-
-  return containers;
-}
-
-// Detect if we're on a public dashboard (no direct API access)
-function isPublicDashboard(): boolean {
-  return window.location.pathname.includes('/public/dashboards/');
 }
 
 const getStyles = () => {
@@ -687,22 +448,10 @@ function calculateRates(
   return rates;
 }
 
-export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange, data }) => {
-  // Stabilize time range
-  const stableTimeFrom = useMemo(() => {
-    return Math.floor(timeRange.from.valueOf() / 10000) * 10000;
-  }, [timeRange.from]);
-  const stableTimeTo = useMemo(() => {
-    return Math.floor(timeRange.to.valueOf() / 10000) * 10000;
-  }, [timeRange.to]);
-
+export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) => {
   const containersPerRow = options.containersPerRow || 0;
   const metricsPerRow = options.metricsPerRow || 0;
   const styles = useStyles2(getStyles);
-
-  // Data source config
-  const dataSourceConfig: DataSourceConfig = options.dataSourceConfig || {};
-  const dataSourceUid = dataSourceConfig.dataSourceUid || '';
 
   const containerGridStyle = {
     gridTemplateColumns:
@@ -716,11 +465,11 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
       metricsPerRow > 0 ? `repeat(${metricsPerRow}, 1fr)` : 'repeat(auto-fill, minmax(120px, 1fr))',
   };
 
-  // Check if we have query data from Grafana's query system (works on public dashboards)
+  // Check if we have query data from Grafana's query system
   const hasQueryData = data?.series?.length > 0;
 
   // Parse containers from props.data.series (from Grafana's query runner)
-  const containersFromProps = useMemo(() => {
+  const containers = useMemo(() => {
     if (!hasQueryData) {
       return [];
     }
@@ -741,7 +490,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
   }, [data?.series, hasQueryData]);
 
   // Parse metrics from props.data.series (from Grafana's query runner)
-  const metricsFromProps = useMemo(() => {
+  const allMetrics = useMemo(() => {
     if (!hasQueryData) {
       return [];
     }
@@ -762,228 +511,10 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     return [];
   }, [data?.series, hasQueryData]);
 
-  // Fallback state for direct API calls (authenticated dashboards without queries)
-  const [fallbackMetrics, setFallbackMetrics] = useState<ContainerMetrics[]>([]);
-  const [fallbackContainers, setFallbackContainers] = useState<ContainerInfo[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
-
-  // Use data from props if available, otherwise use fallback from direct API
-  const allMetrics = metricsFromProps.length > 0 ? metricsFromProps : fallbackMetrics;
-  const containers = containersFromProps.length > 0 ? containersFromProps : fallbackContainers;
-
   const selectedMetricDefs = useMemo(() => {
     const selected = options.selectedMetrics || DEFAULT_METRICS;
     return AVAILABLE_METRICS.filter((m) => selected.includes(m.key));
   }, [options.selectedMetrics]);
-
-  // Get unique API field names for selected metrics
-  const selectedFields = useMemo(() => {
-    const fields = new Set<string>();
-    const selected = options.selectedMetrics || DEFAULT_METRICS;
-    for (const key of selected) {
-      const field = METRIC_TO_FIELD[key];
-      if (field) {
-        fields.add(field);
-      }
-    }
-    fields.add('uptimeSeconds');
-    return Array.from(fields);
-  }, [options.selectedMetrics]);
-
-  // Fetch state refs
-  const lastTimestampRef = useRef<string | null>(null);
-  const metricsMapRef = useRef<Map<string, ContainerMetrics>>(new Map());
-  const initialFetchDoneRef = useRef<boolean>(false);
-  const stableTimeFromRef = useRef<number>(stableTimeFrom);
-  const stableTimeToRef = useRef<number>(stableTimeTo);
-  stableTimeFromRef.current = stableTimeFrom;
-  stableTimeToRef.current = stableTimeTo;
-
-  // Fetch containers via direct API (only when no query data from Grafana)
-  useEffect(() => {
-    // Skip if we have data from Grafana's query system (e.g., on public dashboards with queries configured)
-    if (hasQueryData) {
-      return;
-    }
-
-    // Skip on public dashboards - they require queries to be configured
-    if (isPublicDashboard()) {
-      return;
-    }
-
-    if (!dataSourceUid) {
-      setFallbackContainers([]);
-      return;
-    }
-
-    const fetchContainers = async () => {
-      try {
-        const dsContainers = await fetchContainersDirectly(dataSourceUid);
-        setFallbackContainers(dsContainers);
-      } catch {
-        setFallbackContainers([]);
-      }
-    };
-
-    fetchContainers();
-    const interval = setInterval(fetchContainers, 30000);
-    return () => clearInterval(interval);
-  }, [dataSourceUid, hasQueryData]);
-
-  const targetContainerIds = useMemo(() => {
-    if (options.showAllContainers) {
-      const blacklist = options.containerBlacklist || [];
-      return containers
-        .map((c) => c.containerId)
-        .filter((id) => !blacklist.includes(id));
-    }
-    return options.containerIds || [];
-  }, [options.showAllContainers, options.containerIds, options.containerBlacklist, containers]);
-
-  // Reset on container selection change (for fallback mode)
-  const resetKey = targetContainerIds.join(',');
-  const prevResetKeyRef = useRef<string>('');
-  useEffect(() => {
-    if (hasQueryData) {
-      return; // Not using fallback mode
-    }
-    if (prevResetKeyRef.current !== resetKey) {
-      prevResetKeyRef.current = resetKey;
-      metricsMapRef.current.clear();
-      lastTimestampRef.current = null;
-      initialFetchDoneRef.current = false;
-      setFallbackMetrics([]);
-    }
-  }, [resetKey, hasQueryData]);
-
-  // Prune old metrics (for fallback mode)
-  useEffect(() => {
-    if (hasQueryData) {
-      return; // Not using fallback mode
-    }
-    const fromMs = stableTimeFrom;
-    const map = metricsMapRef.current;
-    let pruned = 0;
-
-    for (const [key, metric] of map.entries()) {
-      const metricTime = new Date(metric.timestamp).getTime();
-      if (metricTime < fromMs) {
-        map.delete(key);
-        pruned++;
-      }
-    }
-
-    if (pruned > 0) {
-      setFallbackMetrics(Array.from(map.values()));
-    }
-  }, [stableTimeFrom, hasQueryData]);
-
-  // Merge metrics (for fallback mode)
-  const mergeFallbackMetrics = useCallback((newMetrics: ContainerMetrics[]) => {
-    const map = metricsMapRef.current;
-    let maxTimestamp = lastTimestampRef.current;
-
-    for (const metric of newMetrics) {
-      const key = `${metric.containerId}:${metric.timestamp}`;
-      if (!map.has(key)) {
-        map.set(key, metric);
-        if (!maxTimestamp || metric.timestamp > maxTimestamp) {
-          maxTimestamp = metric.timestamp;
-        }
-      }
-    }
-
-    lastTimestampRef.current = maxTimestamp;
-    setFallbackMetrics(Array.from(map.values()));
-  }, []);
-
-  // Fetch metrics via direct API (only when no query data from Grafana)
-  const metricsEffectKey = `${dataSourceUid}-${targetContainerIds.join(',')}-${options.showAllContainers}-${options.refreshInterval}-${selectedFields.join(',')}-${hasQueryData}`;
-  useEffect(() => {
-    // Skip if we have data from Grafana's query system (e.g., on public dashboards with queries configured)
-    if (hasQueryData) {
-      return;
-    }
-
-    // Skip on public dashboards - they require queries to be configured
-    if (isPublicDashboard()) {
-      if (!dataSourceUid) {
-        setError('Public dashboards require queries to be configured in the panel. Please add container and metrics queries to the panel in edit mode.');
-      } else {
-        setError('Public dashboards require queries to be configured. Add a "containers" query and a "metrics" query to this panel.');
-      }
-      return;
-    }
-
-    if (!dataSourceUid) {
-      setError('No data source selected. Please configure a Docker Metrics data source in panel options.');
-      setFallbackMetrics([]);
-      return;
-    }
-
-    if (targetContainerIds.length === 0 && !options.showAllContainers) {
-      setError('No containers selected. Enable "Show All Containers" or select specific containers.');
-      setFallbackMetrics([]);
-      return;
-    }
-
-    setError(null);
-    let isCancelled = false;
-
-    const fetchAllMetrics = async (isIncremental: boolean) => {
-      if (isCancelled) {return;}
-
-      const fromDate = isIncremental && lastTimestampRef.current
-        ? new Date(lastTimestampRef.current)
-        : new Date(stableTimeFromRef.current);
-      const toDate = new Date(stableTimeToRef.current);
-
-      if (!isIncremental) {
-        setLoading(true);
-      }
-
-      try {
-        const newMetrics = await fetchMetricsDirectly(
-          dataSourceUid,
-          selectedFields,
-          fromDate,
-          toDate
-        );
-
-        if (isCancelled) {return;}
-
-        if (!isIncremental) {
-          setLoading(false);
-          initialFetchDoneRef.current = true;
-        }
-
-        if (newMetrics.length > 0) {
-          mergeFallbackMetrics(newMetrics);
-        }
-      } catch (err) {
-        if (!isCancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to fetch metrics');
-          setLoading(false);
-        }
-      }
-    };
-
-    fetchAllMetrics(false);
-
-    const refreshInterval = (options.refreshInterval || 10) * 1000;
-    const interval = setInterval(() => {
-      if (initialFetchDoneRef.current) {
-        fetchAllMetrics(true);
-      }
-    }, refreshInterval);
-
-    return () => {
-      isCancelled = true;
-      clearInterval(interval);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metricsEffectKey]);
 
   // Group by container and host
   const containersByHost = useMemo(() => {
@@ -1120,28 +651,16 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
     );
   };
 
-  if (error) {
+  if (!hasQueryData) {
     return (
       <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
-        <div className={styles.error}>
-          <strong>Error:</strong> {error}
+        <div className={styles.emptyState}>
+          No query data available.
+          <br />
+          <span style={{ fontSize: '11px' }}>
+            Add queries to this panel: a &quot;containers&quot; query and a &quot;metrics&quot; query from a Docker Metrics data source.
+          </span>
         </div>
-        <div className={styles.info}>
-          <p>Configuration:</p>
-          <ul>
-            <li>Data Source: {dataSourceUid || 'Not selected'}</li>
-            <li>Show All: {options.showAllContainers ? 'Yes' : 'No'}</li>
-            <li>Selected: {(options.containerIds || []).length} containers</li>
-          </ul>
-        </div>
-      </div>
-    );
-  }
-
-  if (loading && allMetrics.length === 0 && targetContainerIds.length > 0) {
-    return (
-      <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
-        <div className={styles.loading}>Loading metrics...</div>
       </div>
     );
   }
@@ -1153,11 +672,9 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, timeRange
           No containers to display.
           <br />
           <span style={{ fontSize: '11px' }}>
-            {!dataSourceUid
-              ? 'Select a Docker Metrics data source in panel options.'
-              : options.showAllContainers
-                ? 'Waiting for containers to be discovered...'
-                : 'Select containers in panel options or enable "Show All Containers".'}
+            {options.showAllContainers
+              ? 'Waiting for containers to be discovered...'
+              : 'Select containers in panel options or enable "Show All Containers".'}
           </span>
         </div>
       </div>

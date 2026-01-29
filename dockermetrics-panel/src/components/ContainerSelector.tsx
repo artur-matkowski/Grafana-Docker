@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import { css } from '@emotion/css';
-import { ContainerInfo, DataSourceConfig } from '../types';
-import { fetchContainersViaDataSource } from '../utils/datasource';
+import { ContainerInfo } from '../types';
 
 interface ContainerSelectorProps {
-  dataSourceConfig: DataSourceConfig;
+  containers: ContainerInfo[];
   selectedContainerIds: string[];
   blacklistedContainerIds: string[];
   showAllContainers: boolean;
@@ -116,16 +115,6 @@ const styles = {
     color: #888;
     font-family: monospace;
   `,
-  loading: css`
-    color: #888;
-    font-size: 12px;
-    padding: 8px;
-  `,
-  error: css`
-    color: #ff5555;
-    font-size: 12px;
-    padding: 8px;
-  `,
   emptyState: css`
     color: #888;
     font-size: 12px;
@@ -141,7 +130,7 @@ const styles = {
 };
 
 export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
-  dataSourceConfig,
+  containers,
   selectedContainerIds,
   blacklistedContainerIds,
   showAllContainers,
@@ -149,37 +138,7 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
   onBlacklistChange,
   onShowAllChange,
 }) => {
-  const [containers, setContainers] = useState<ContainerInfo[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-
-  const dataSourceUid = dataSourceConfig?.dataSourceUid || '';
-
-  const fetchContainers = useCallback(async () => {
-    if (!dataSourceUid) {
-      setContainers([]);
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const result = await fetchContainersViaDataSource(dataSourceUid);
-      setContainers(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch containers');
-    } finally {
-      setLoading(false);
-    }
-  }, [dataSourceUid]);
-
-  useEffect(() => {
-    fetchContainers();
-    const interval = setInterval(fetchContainers, 30000);
-    return () => clearInterval(interval);
-  }, [fetchContainers]);
 
   const filteredContainers = containers.filter((c) => {
     const searchLower = search.toLowerCase();
@@ -235,8 +194,12 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
     }
   };
 
-  if (!dataSourceUid) {
-    return <div className={styles.emptyState}>Configure a data source first in the Data Source section</div>;
+  if (containers.length === 0) {
+    return (
+      <div className={styles.emptyState}>
+        No containers available. Add a &quot;containers&quot; query to the panel.
+      </div>
+    );
   }
 
   return (
@@ -270,16 +233,6 @@ export const ContainerSelector: React.FC<ContainerSelectorProps> = ({
         value={search}
         onChange={(e) => setSearch(e.target.value)}
       />
-
-      {error && <div className={styles.error}>{error}</div>}
-
-      {loading && containers.length === 0 && (
-        <div className={styles.loading}>Loading containers...</div>
-      )}
-
-      {!loading && containers.length === 0 && (
-        <div className={styles.emptyState}>No containers found</div>
-      )}
 
       <div className={styles.containerList}>
         {Object.entries(containersByHost).map(([hostKey, hostContainers]) => {

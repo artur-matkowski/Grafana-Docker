@@ -63,14 +63,8 @@ export function getStateDisplay(state: ContainerState): { label: string; color: 
   }
 }
 
-// Data source configuration (required)
-export interface DataSourceConfig {
-  dataSourceUid?: string;
-}
-
 // Panel options
 export interface SimpleOptions {
-  dataSourceConfig: DataSourceConfig;
   containerIds: string[];           // Whitelist - containers to show when showAllContainers is false
   containerBlacklist: string[];     // Blacklist - containers to exclude when showAllContainers is true
   showAllContainers: boolean;

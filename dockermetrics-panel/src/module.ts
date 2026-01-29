@@ -3,19 +3,9 @@ import { SimpleOptions, DEFAULT_METRICS } from './types';
 import { SimplePanel } from './components/SimplePanel';
 import { ContainerSelectorEditor } from './components/ContainerSelectorEditor';
 import { MetricSelectorEditor } from './components/MetricSelectorEditor';
-import { DataSourceEditor } from './components/DataSourceEditor';
 
 export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOptions((builder) => {
   return builder
-    .addCustomEditor({
-      id: 'dataSourceSelector',
-      path: 'dataSourceConfig',
-      name: 'Data Source',
-      description: 'Select the Docker Metrics data source to fetch metrics from',
-      category: ['Data Source'],
-      editor: DataSourceEditor,
-      defaultValue: { useDataSource: false },
-    })
     .addBooleanSwitch({
       path: 'showAllContainers',
       name: 'Show All Containers',
