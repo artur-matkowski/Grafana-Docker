@@ -29,6 +29,52 @@ public enum ContainerState
 }
 
 /// <summary>
+/// Container health check status from Docker HEALTHCHECK.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum ContainerHealthStatus
+{
+    /// <summary>No health check defined.</summary>
+    None = 0,
+    /// <summary>Health check is starting.</summary>
+    Starting,
+    /// <summary>Container is healthy.</summary>
+    Healthy,
+    /// <summary>Container is unhealthy.</summary>
+    Unhealthy
+}
+
+/// <summary>
+/// Helper methods for ContainerHealthStatus.
+/// </summary>
+public static class ContainerHealthStatusExtensions
+{
+    /// <summary>
+    /// Parse Docker API health status string to ContainerHealthStatus enum.
+    /// </summary>
+    public static ContainerHealthStatus ParseDockerHealthStatus(string? status)
+    {
+        if (string.IsNullOrEmpty(status))
+            return ContainerHealthStatus.None;
+
+        return status.ToLowerInvariant() switch
+        {
+            "healthy" => ContainerHealthStatus.Healthy,
+            "unhealthy" => ContainerHealthStatus.Unhealthy,
+            "starting" => ContainerHealthStatus.Starting,
+            "none" => ContainerHealthStatus.None,
+            _ => ContainerHealthStatus.None
+        };
+    }
+
+    /// <summary>
+    /// Check if container is unhealthy.
+    /// </summary>
+    public static bool IsUnhealthy(this ContainerHealthStatus status) =>
+        status == ContainerHealthStatus.Unhealthy;
+}
+
+/// <summary>
 /// Helper methods for ContainerState.
 /// </summary>
 public static class ContainerStateExtensions
@@ -95,6 +141,7 @@ public record ContainerMetrics(
 
     // Container state
     ContainerState State,
+    ContainerHealthStatus HealthStatus,
 
     // PSI metrics (null if not available)
     PsiMetrics? CpuPressure,
@@ -105,6 +152,7 @@ public record ContainerMetrics(
     // Computed properties for backward compatibility
     public bool IsRunning => State.IsRunning();
     public bool IsPaused => State.IsPaused();
+    public bool IsUnhealthy => HealthStatus.IsUnhealthy();
 }
 
 /// <summary>
@@ -126,11 +174,13 @@ public record PsiMetrics(
 public record ContainerInfo(
     string ContainerId,
     string ContainerName,
-    ContainerState State
+    ContainerState State,
+    ContainerHealthStatus HealthStatus
 )
 {
     public bool IsRunning => State.IsRunning();
     public bool IsPaused => State.IsPaused();
+    public bool IsUnhealthy => HealthStatus.IsUnhealthy();
 }
 
 /// <summary>

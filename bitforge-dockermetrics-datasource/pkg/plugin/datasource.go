@@ -94,13 +94,36 @@ func (d *Datasource) QueryData(ctx context.Context, req *backend.QueryDataReques
 	return response, nil
 }
 
+// HostSelection represents per-host container selection configuration
+type HostSelection struct {
+	HostID           string              `json:"hostId"`
+	Mode             string              `json:"mode"` // "whitelist" | "blacklist"
+	ContainerIDs     []string            `json:"containerIds"`
+	ContainerMetrics map[string][]string `json:"containerMetrics"`
+	Metrics          []string            `json:"metrics"` // For blacklist mode
+}
+
 // Query model from frontend
 type QueryModel struct {
-	QueryType            string   `json:"queryType"`
+	QueryType      string                    `json:"queryType"`
+	HostSelections map[string]HostSelection  `json:"hostSelections"`
+
+	// Legacy fields (kept for backward compatibility)
 	ContainerIDs         []string `json:"containerIds"`
 	ContainerNamePattern string   `json:"containerNamePattern"`
 	Metrics              []string `json:"metrics"`
 	HostIDs              []string `json:"hostIds"`
+}
+
+// AllMetrics lists all available metrics
+var AllMetrics = []string{
+	"cpuPercent", "memoryBytes", "memoryPercent",
+	"networkRxBytes", "networkTxBytes",
+	"diskReadBytes", "diskWriteBytes",
+	"uptimeSeconds",
+	"cpuPressureSome", "cpuPressureFull",
+	"memoryPressureSome", "memoryPressureFull",
+	"ioPressureSome", "ioPressureFull",
 }
 
 // query handles a single query
@@ -115,6 +138,11 @@ func (d *Datasource) query(ctx context.Context, pCtx backend.PluginContext, quer
 		return response
 	}
 
+	// Default to metrics query if not specified
+	if qm.QueryType == "" {
+		qm.QueryType = "metrics"
+	}
+
 	d.logger.Debug("Processing query",
 		"queryType", qm.QueryType,
 		"metrics", qm.Metrics,
@@ -123,13 +151,13 @@ func (d *Datasource) query(ctx context.Context, pCtx backend.PluginContext, quer
 	)
 
 	switch qm.QueryType {
-	case "metrics":
+	case "metrics", "":
 		return d.queryMetrics(ctx, query, qm)
 	case "containers":
 		return d.queryContainers(ctx, qm)
 	default:
-		response.Error = fmt.Errorf("unknown query type: %s", qm.QueryType)
-		return response
+		// Treat unknown as metrics query for backward compatibility
+		return d.queryMetrics(ctx, query, qm)
 	}
 }
 
@@ -170,6 +198,12 @@ type MetricsResponse struct {
 
 // queryMetrics fetches metrics from Docker agents and returns DataFrames
 func (d *Datasource) queryMetrics(ctx context.Context, query backend.DataQuery, qm QueryModel) backend.DataResponse {
+	// New path: if hostSelections exists, use matrix-based filtering
+	if len(qm.HostSelections) > 0 {
+		return d.queryMetricsMatrix(ctx, query, qm)
+	}
+
+	// Legacy path: use existing logic
 	var response backend.DataResponse
 
 	if len(qm.Metrics) == 0 {
@@ -229,9 +263,330 @@ func (d *Datasource) queryMetrics(ctx context.Context, query backend.DataQuery, 
 
 	// Build DataFrames - one frame per metric type per container
 	frames := d.buildMetricFrames(allMetrics, qm.Metrics)
+
+	// Also include containers frame for public dashboard support
+	// This allows panels to receive container state info without a separate query
+	containersFrame := d.buildContainersFrame(ctx, hosts)
+	if containersFrame != nil {
+		frames = append(frames, containersFrame)
+	}
+
 	response.Frames = frames
 
 	return response
+}
+
+// queryMetricsMatrix handles matrix-based container/metric selection
+func (d *Datasource) queryMetricsMatrix(ctx context.Context, query backend.DataQuery, qm QueryModel) backend.DataResponse {
+	var response backend.DataResponse
+
+	// Log incoming hostSelections for debugging
+	for hostID, hostSel := range qm.HostSelections {
+		d.logger.Debug("queryMetricsMatrix: incoming hostSelection",
+			"hostID", hostID,
+			"mode", hostSel.Mode,
+			"containerIDsCount", len(hostSel.ContainerIDs),
+			"containerMetricsKeys", len(hostSel.ContainerMetrics),
+		)
+		for containerID, metrics := range hostSel.ContainerMetrics {
+			d.logger.Debug("queryMetricsMatrix: containerMetrics entry",
+				"hostID", hostID,
+				"containerID", containerID,
+				"metricsCount", len(metrics),
+				"metrics", metrics,
+			)
+		}
+	}
+
+	// Collect all hosts from selections
+	hostIDs := make([]string, 0, len(qm.HostSelections))
+	for hostID := range qm.HostSelections {
+		hostIDs = append(hostIDs, hostID)
+	}
+
+	hosts := d.getEnabledHosts(hostIDs)
+	if len(hosts) == 0 {
+		response.Error = fmt.Errorf("no enabled hosts configured")
+		return response
+	}
+
+	// Collect metrics from all hosts with matrix-based filtering
+	allMetrics := make([]metricsWithHost, 0)
+
+	for _, host := range hosts {
+		hostSel, ok := qm.HostSelections[host.ID]
+		if !ok {
+			continue
+		}
+
+		// Determine which metrics to fetch for this host
+		metricsToFetch := d.getMetricsForHost(hostSel)
+		if len(metricsToFetch) == 0 {
+			continue
+		}
+
+		metrics, err := d.fetchMetricsFromHost(ctx, host, query.TimeRange, metricsToFetch)
+		if err != nil {
+			d.logger.Error("Failed to fetch metrics from host",
+				"host", host.Name,
+				"url", host.URL,
+				"error", err,
+			)
+			continue
+		}
+
+		// Filter metrics based on host selection mode
+		filtered := d.filterMetricsBySelection(metrics, hostSel)
+
+		// Copy hostSel for the pointer
+		hostSelCopy := hostSel
+		allMetrics = append(allMetrics, metricsWithHost{
+			HostID:        host.ID,
+			HostName:      host.Name,
+			Metrics:       filtered,
+			HostSelection: &hostSelCopy,
+		})
+	}
+
+	// Collect all requested metrics across all host selections
+	requestedMetrics := d.collectRequestedMetrics(qm.HostSelections)
+
+	// Build DataFrames
+	frames := d.buildMetricFrames(allMetrics, requestedMetrics)
+
+	// Include containers frame for panel state display
+	containersFrame := d.buildContainersFrameFiltered(ctx, hosts, qm.HostSelections)
+	if containersFrame != nil {
+		frames = append(frames, containersFrame)
+	}
+
+	response.Frames = frames
+	return response
+}
+
+// getMetricsForHost determines which metrics to fetch for a host based on selection
+func (d *Datasource) getMetricsForHost(hostSel HostSelection) []string {
+	// Both modes use containerMetrics for per-container metric selection
+	// Collect unique metrics from containerMetrics
+	metricsSet := make(map[string]bool)
+	for _, metrics := range hostSel.ContainerMetrics {
+		for _, m := range metrics {
+			metricsSet[m] = true
+		}
+	}
+
+	// If no containerMetrics defined, default to all metrics
+	if len(metricsSet) == 0 {
+		return AllMetrics
+	}
+
+	metrics := make([]string, 0, len(metricsSet))
+	for m := range metricsSet {
+		metrics = append(metrics, m)
+	}
+	return metrics
+}
+
+// filterMetricsBySelection filters metrics based on host selection mode
+func (d *Datasource) filterMetricsBySelection(metrics []ContainerMetric, hostSel HostSelection) []ContainerMetric {
+	filtered := make([]ContainerMetric, 0)
+
+	containerSet := make(map[string]bool)
+	for _, cid := range hostSel.ContainerIDs {
+		containerSet[cid] = true
+	}
+
+	for _, m := range metrics {
+		if hostSel.Mode == "whitelist" {
+			// Whitelist: only include if container is in the list
+			if !containerSet[m.ContainerID] {
+				continue
+			}
+		} else {
+			// Blacklist: exclude if container is in the list
+			if containerSet[m.ContainerID] {
+				continue
+			}
+		}
+		filtered = append(filtered, m)
+	}
+
+	return filtered
+}
+
+// collectRequestedMetrics gathers all unique metrics from host selections
+func (d *Datasource) collectRequestedMetrics(hostSelections map[string]HostSelection) []string {
+	metricsSet := make(map[string]bool)
+
+	for _, hostSel := range hostSelections {
+		if hostSel.Mode == "blacklist" {
+			// Blacklist mode: use selected metrics or all
+			metricsToAdd := hostSel.Metrics
+			if len(metricsToAdd) == 0 {
+				metricsToAdd = AllMetrics
+			}
+			for _, m := range metricsToAdd {
+				metricsSet[m] = true
+			}
+		} else {
+			// Whitelist mode: collect from containerMetrics
+			for _, metrics := range hostSel.ContainerMetrics {
+				for _, m := range metrics {
+					metricsSet[m] = true
+				}
+			}
+		}
+	}
+
+	metrics := make([]string, 0, len(metricsSet))
+	for m := range metricsSet {
+		metrics = append(metrics, m)
+	}
+
+	if len(metrics) == 0 {
+		return AllMetrics
+	}
+	return metrics
+}
+
+// buildContainersFrameFiltered builds containers frame filtered by host selections
+func (d *Datasource) buildContainersFrameFiltered(ctx context.Context, hosts []HostConfig, hostSelections map[string]HostSelection) *data.Frame {
+	containerIDs := make([]string, 0)
+	containerNames := make([]string, 0)
+	hostIDs := make([]string, 0)
+	hostNames := make([]string, 0)
+	states := make([]string, 0)
+	healthStatuses := make([]string, 0)
+	isRunningList := make([]bool, 0)
+	isPausedList := make([]bool, 0)
+	isUnhealthyList := make([]bool, 0)
+
+	for _, host := range hosts {
+		hostSel, ok := hostSelections[host.ID]
+		if !ok {
+			continue
+		}
+
+		containers, err := d.fetchContainersFromHost(ctx, host)
+		if err != nil {
+			d.logger.Warn("Failed to fetch containers for metrics response",
+				"host", host.Name,
+				"error", err,
+			)
+			continue
+		}
+
+		containerSet := make(map[string]bool)
+		for _, cid := range hostSel.ContainerIDs {
+			containerSet[cid] = true
+		}
+
+		for _, c := range containers {
+			include := false
+			if hostSel.Mode == "whitelist" {
+				include = containerSet[c.ContainerID]
+			} else {
+				include = !containerSet[c.ContainerID]
+			}
+
+			if include {
+				containerIDs = append(containerIDs, c.ContainerID)
+				containerNames = append(containerNames, c.ContainerName)
+				hostIDs = append(hostIDs, host.ID)
+				hostNames = append(hostNames, host.Name)
+				states = append(states, c.State)
+				healthStatuses = append(healthStatuses, c.HealthStatus)
+				isRunningList = append(isRunningList, c.IsRunning)
+				isPausedList = append(isPausedList, c.IsPaused)
+				isUnhealthyList = append(isUnhealthyList, c.IsUnhealthy)
+			}
+		}
+	}
+
+	if len(containerIDs) == 0 {
+		return nil
+	}
+
+	frame := data.NewFrame("containers",
+		data.NewField("containerId", nil, containerIDs),
+		data.NewField("containerName", nil, containerNames),
+		data.NewField("hostId", nil, hostIDs),
+		data.NewField("hostName", nil, hostNames),
+		data.NewField("state", nil, states),
+		data.NewField("healthStatus", nil, healthStatuses),
+		data.NewField("isRunning", nil, isRunningList),
+		data.NewField("isPaused", nil, isPausedList),
+		data.NewField("isUnhealthy", nil, isUnhealthyList),
+	)
+
+	frame.Meta = &data.FrameMeta{
+		Custom: map[string]interface{}{
+			"queryType": "containers",
+		},
+	}
+
+	return frame
+}
+
+// buildContainersFrame fetches containers from hosts and builds a DataFrame
+func (d *Datasource) buildContainersFrame(ctx context.Context, hosts []HostConfig) *data.Frame {
+	containerIDs := make([]string, 0)
+	containerNames := make([]string, 0)
+	hostIDs := make([]string, 0)
+	hostNames := make([]string, 0)
+	states := make([]string, 0)
+	healthStatuses := make([]string, 0)
+	isRunningList := make([]bool, 0)
+	isPausedList := make([]bool, 0)
+	isUnhealthyList := make([]bool, 0)
+
+	for _, host := range hosts {
+		containers, err := d.fetchContainersFromHost(ctx, host)
+		if err != nil {
+			d.logger.Warn("Failed to fetch containers for metrics response",
+				"host", host.Name,
+				"error", err,
+			)
+			continue
+		}
+
+		for _, c := range containers {
+			containerIDs = append(containerIDs, c.ContainerID)
+			containerNames = append(containerNames, c.ContainerName)
+			hostIDs = append(hostIDs, host.ID)
+			hostNames = append(hostNames, host.Name)
+			states = append(states, c.State)
+			healthStatuses = append(healthStatuses, c.HealthStatus)
+			isRunningList = append(isRunningList, c.IsRunning)
+			isPausedList = append(isPausedList, c.IsPaused)
+			isUnhealthyList = append(isUnhealthyList, c.IsUnhealthy)
+		}
+	}
+
+	if len(containerIDs) == 0 {
+		return nil
+	}
+
+	frame := data.NewFrame("containers",
+		data.NewField("containerId", nil, containerIDs),
+		data.NewField("containerName", nil, containerNames),
+		data.NewField("hostId", nil, hostIDs),
+		data.NewField("hostName", nil, hostNames),
+		data.NewField("state", nil, states),
+		data.NewField("healthStatus", nil, healthStatuses),
+		data.NewField("isRunning", nil, isRunningList),
+		data.NewField("isPaused", nil, isPausedList),
+		data.NewField("isUnhealthy", nil, isUnhealthyList),
+	)
+
+	// Mark this frame with custom metadata so panel can identify it
+	frame.Meta = &data.FrameMeta{
+		Custom: map[string]interface{}{
+			"queryType": "containers",
+		},
+	}
+
+	return frame
 }
 
 // fetchMetricsFromHost fetches metrics from a single Docker agent
@@ -275,9 +630,10 @@ func (d *Datasource) fetchMetricsFromHost(ctx context.Context, host HostConfig, 
 
 // metricsWithHost groups metrics by host
 type metricsWithHost struct {
-	HostID   string
-	HostName string
-	Metrics  []ContainerMetric
+	HostID        string
+	HostName      string
+	Metrics       []ContainerMetric
+	HostSelection *HostSelection // For per-container metric filtering
 }
 
 // containerKey identifies a container across hosts
@@ -291,6 +647,7 @@ type containerData struct {
 	hostName      string
 	containerName string
 	metrics       []ContainerMetric
+	hostSelection *HostSelection // For per-container metric filtering
 }
 
 // buildMetricFrames converts metrics into Grafana DataFrames
@@ -306,6 +663,7 @@ func (d *Datasource) buildMetricFrames(allMetrics []metricsWithHost, requestedMe
 					hostName:      mwh.HostName,
 					containerName: m.ContainerName,
 					metrics:       make([]ContainerMetric, 0),
+					hostSelection: mwh.HostSelection,
 				}
 			}
 			byContainer[key].metrics = append(byContainer[key].metrics, m)
@@ -319,7 +677,29 @@ func (d *Datasource) buildMetricFrames(allMetrics []metricsWithHost, requestedMe
 		// Sort metrics by timestamp
 		sortMetricsByTime(cd.metrics)
 
+		// Determine which metrics to include for this container
+		containerMetrics := d.getMetricsForContainer(cd.hostSelection, key.containerID)
+
+		d.logger.Debug("buildMetricFrames: processing container",
+			"containerID", key.containerID,
+			"containerName", cd.containerName,
+			"containerMetricsCount", len(containerMetrics),
+			"requestedMetricsCount", len(requestedMetrics),
+		)
+
 		for _, metricName := range requestedMetrics {
+			// Skip if this metric is not selected for this container
+			if !contains(containerMetrics, metricName) {
+				d.logger.Debug("buildMetricFrames: SKIPPING metric (not in containerMetrics)",
+					"containerID", key.containerID,
+					"metric", metricName,
+				)
+				continue
+			}
+			d.logger.Debug("buildMetricFrames: BUILDING metric frame",
+				"containerID", key.containerID,
+				"metric", metricName,
+			)
 			frame := d.buildSingleMetricFrame(key, cd, metricName)
 			if frame != nil {
 				frames = append(frames, frame)
@@ -328,6 +708,32 @@ func (d *Datasource) buildMetricFrames(allMetrics []metricsWithHost, requestedMe
 	}
 
 	return frames
+}
+
+// getMetricsForContainer returns the metrics that should be shown for a specific container
+func (d *Datasource) getMetricsForContainer(hostSel *HostSelection, containerID string) []string {
+	// If no host selection, return all metrics (legacy mode)
+	if hostSel == nil {
+		d.logger.Debug("getMetricsForContainer: hostSel is nil, returning AllMetrics", "containerID", containerID)
+		return AllMetrics
+	}
+
+	// Check if container has specific metrics defined
+	if metrics, ok := hostSel.ContainerMetrics[containerID]; ok && len(metrics) > 0 {
+		d.logger.Debug("getMetricsForContainer: found custom metrics",
+			"containerID", containerID,
+			"metricsCount", len(metrics),
+			"metrics", metrics,
+		)
+		return metrics
+	}
+
+	d.logger.Debug("getMetricsForContainer: no custom metrics, returning AllMetrics",
+		"containerID", containerID,
+		"containerMetricsKeys", hostSel.ContainerMetrics,
+	)
+	// Default: return all metrics
+	return AllMetrics
 }
 
 // metricDisplayName maps internal metric names to display names
@@ -469,8 +875,10 @@ type ContainerInfo struct {
 	ContainerID   string `json:"containerId"`
 	ContainerName string `json:"containerName"`
 	State         string `json:"state"`
+	HealthStatus  string `json:"healthStatus"`
 	IsRunning     bool   `json:"isRunning"`
 	IsPaused      bool   `json:"isPaused"`
+	IsUnhealthy   bool   `json:"isUnhealthy"`
 }
 
 // queryContainers returns a list of containers for variable queries
@@ -486,10 +894,13 @@ func (d *Datasource) queryContainers(ctx context.Context, qm QueryModel) backend
 	// Collect containers from all hosts
 	containerIDs := make([]string, 0)
 	containerNames := make([]string, 0)
+	hostIDs := make([]string, 0)
 	hostNames := make([]string, 0)
 	states := make([]string, 0)
+	healthStatuses := make([]string, 0)
 	isRunningList := make([]bool, 0)
 	isPausedList := make([]bool, 0)
+	isUnhealthyList := make([]bool, 0)
 
 	for _, host := range hosts {
 		containers, err := d.fetchContainersFromHost(ctx, host)
@@ -504,10 +915,13 @@ func (d *Datasource) queryContainers(ctx context.Context, qm QueryModel) backend
 		for _, c := range containers {
 			containerIDs = append(containerIDs, c.ContainerID)
 			containerNames = append(containerNames, c.ContainerName)
+			hostIDs = append(hostIDs, host.ID)
 			hostNames = append(hostNames, host.Name)
 			states = append(states, c.State)
+			healthStatuses = append(healthStatuses, c.HealthStatus)
 			isRunningList = append(isRunningList, c.IsRunning)
 			isPausedList = append(isPausedList, c.IsPaused)
+			isUnhealthyList = append(isUnhealthyList, c.IsUnhealthy)
 		}
 	}
 
@@ -515,11 +929,21 @@ func (d *Datasource) queryContainers(ctx context.Context, qm QueryModel) backend
 	frame := data.NewFrame("containers",
 		data.NewField("containerId", nil, containerIDs),
 		data.NewField("containerName", nil, containerNames),
+		data.NewField("hostId", nil, hostIDs),
 		data.NewField("hostName", nil, hostNames),
 		data.NewField("state", nil, states),
+		data.NewField("healthStatus", nil, healthStatuses),
 		data.NewField("isRunning", nil, isRunningList),
 		data.NewField("isPaused", nil, isPausedList),
+		data.NewField("isUnhealthy", nil, isUnhealthyList),
 	)
+
+	// Mark with custom metadata for identification
+	frame.Meta = &data.FrameMeta{
+		Custom: map[string]interface{}{
+			"queryType": "containers",
+		},
+	}
 
 	response.Frames = append(response.Frames, frame)
 	return response
