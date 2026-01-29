@@ -1,6 +1,16 @@
 import { DataSourceJsonData, DataQuery } from '@grafana/data';
 
 /**
+ * Container control actions
+ */
+export type ControlAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause';
+
+/**
+ * All valid control actions
+ */
+export const ALL_CONTROL_ACTIONS: ControlAction[] = ['start', 'stop', 'restart', 'pause', 'unpause'];
+
+/**
  * Host selection mode for container filtering
  */
 export type HostSelectionMode = 'whitelist' | 'blacklist';
@@ -49,6 +59,8 @@ export interface HostConfig {
  */
 export interface DockerMetricsDataSourceOptions extends DataSourceJsonData {
   hosts?: HostConfig[];
+  enableContainerControls?: boolean;
+  allowedControlActions?: ControlAction[];
 }
 
 /**
