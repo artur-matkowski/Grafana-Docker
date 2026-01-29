@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { PanelProps, DataFrame, FieldType } from '@grafana/data';
-import { SimpleOptions, ContainerMetrics, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, DEFAULT_METRICS, ContainerState, ContainerHealthStatus, getStateDisplay, getPulseType } from 'types';
+import { SimpleOptions, ContainerMetrics, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, ContainerState, ContainerHealthStatus, getStateDisplay, getPulseType } from 'types';
 import { css, cx, keyframes } from '@emotion/css';
 import { useStyles2 } from '@grafana/ui';
 import { normalizeContainerState, normalizeHealthStatus, isStateRunning, isStatePaused, isHealthUnhealthy } from '../utils/datasource';
@@ -59,6 +59,7 @@ function parseContainersFromDataFrame(frame: DataFrame): ContainerInfo[] {
 
   const containerIdField = frame.fields.find((f) => f.name === 'containerId');
   const containerNameField = frame.fields.find((f) => f.name === 'containerName');
+  const hostIdField = frame.fields.find((f) => f.name === 'hostId');
   const hostNameField = frame.fields.find((f) => f.name === 'hostName');
   const stateField = frame.fields.find((f) => f.name === 'state');
   const healthStatusField = frame.fields.find((f) => f.name === 'healthStatus');
@@ -73,10 +74,11 @@ function parseContainersFromDataFrame(frame: DataFrame): ContainerInfo[] {
   for (let i = 0; i < frame.length; i++) {
     const state = normalizeContainerState(stateField?.values[i]);
     const healthStatus = normalizeHealthStatus(healthStatusField?.values[i]);
+    const hostName = (hostNameField?.values[i] as string) || 'default';
 
     containers.push({
-      hostId: (hostNameField?.values[i] as string) || 'default',
-      hostName: (hostNameField?.values[i] as string) || 'default',
+      hostId: (hostIdField?.values[i] as string) || hostName,
+      hostName: hostName,
       containerId: containerIdField.values[i] as string,
       containerName: containerNameField.values[i] as string,
       state,
@@ -90,9 +92,16 @@ function parseContainersFromDataFrame(frame: DataFrame): ContainerInfo[] {
   return containers;
 }
 
+// Result type for parseMetricsFromDataFrames - includes per-container metric tracking
+interface ParsedMetricsResult {
+  metrics: ContainerMetrics[];
+  presentMetrics: Map<string, Set<string>>; // containerId -> set of metric keys
+}
+
 // Parse metrics from Grafana's DataFrame format (from props.data.series)
-function parseMetricsFromDataFrames(frames: DataFrame[]): ContainerMetrics[] {
+function parseMetricsFromDataFrames(frames: DataFrame[]): ParsedMetricsResult {
   const metricsMap = new Map<string, ContainerMetrics>();
+  const presentMetrics = new Map<string, Set<string>>();
 
   for (const frame of frames) {
     if (!frame.fields || frame.fields.length < 2) {
@@ -111,6 +120,46 @@ function parseMetricsFromDataFrames(frames: DataFrame[]): ContainerMetrics[] {
     const containerName = labels.containerName || '';
     const hostName = labels.hostName || 'default';
     const fieldName = valueField.name || '';
+
+    // Track which metric this frame represents for this container
+    let metricKey: string | null = null;
+    if (fieldName.includes('CPU %') || fieldName === 'cpuPercent') {
+      metricKey = 'cpuPercent';
+    } else if (fieldName.includes('Memory (MB)') || fieldName === 'memoryBytes') {
+      metricKey = 'memoryBytes';
+    } else if (fieldName.includes('Memory %') || fieldName === 'memoryPercent') {
+      metricKey = 'memoryPercent';
+    } else if (fieldName.includes('Network RX') || fieldName === 'networkRxBytes') {
+      metricKey = 'networkRxBytes';
+    } else if (fieldName.includes('Network TX') || fieldName === 'networkTxBytes') {
+      metricKey = 'networkTxBytes';
+    } else if (fieldName.includes('Disk Read') || fieldName === 'diskReadBytes') {
+      metricKey = 'diskReadBytes';
+    } else if (fieldName.includes('Disk Write') || fieldName === 'diskWriteBytes') {
+      metricKey = 'diskWriteBytes';
+    } else if (fieldName.includes('Uptime') || fieldName === 'uptimeSeconds') {
+      metricKey = 'uptimeSeconds';
+    } else if (fieldName === 'cpuPressureSome' || fieldName.includes('CPU Pressure (some)')) {
+      metricKey = 'cpuPressureSome';
+    } else if (fieldName === 'cpuPressureFull' || fieldName.includes('CPU Pressure (full)')) {
+      metricKey = 'cpuPressureFull';
+    } else if (fieldName === 'memoryPressureSome' || fieldName.includes('Memory Pressure (some)')) {
+      metricKey = 'memoryPressureSome';
+    } else if (fieldName === 'memoryPressureFull' || fieldName.includes('Memory Pressure (full)')) {
+      metricKey = 'memoryPressureFull';
+    } else if (fieldName === 'ioPressureSome' || fieldName.includes('I/O Pressure (some)')) {
+      metricKey = 'ioPressureSome';
+    } else if (fieldName === 'ioPressureFull' || fieldName.includes('I/O Pressure (full)')) {
+      metricKey = 'ioPressureFull';
+    }
+
+    // Track that this container has this metric
+    if (metricKey && containerId) {
+      if (!presentMetrics.has(containerId)) {
+        presentMetrics.set(containerId, new Set());
+      }
+      presentMetrics.get(containerId)!.add(metricKey);
+    }
 
     for (let i = 0; i < frame.length; i++) {
       const timestamp = new Date(timeField.values[i] as number).toISOString();
@@ -184,7 +233,10 @@ function parseMetricsFromDataFrames(frames: DataFrame[]): ContainerMetrics[] {
     }
   }
 
-  return Array.from(metricsMap.values());
+  return {
+    metrics: Array.from(metricsMap.values()),
+    presentMetrics,
+  };
 }
 
 const getStyles = () => {
@@ -419,6 +471,7 @@ interface ContainerWithMetrics {
   latest: ContainerMetrics | null;
   rateData: Map<string, number[]>;
   latestRates: Map<string, number>;
+  presentMetrics: Set<string>; // Which metrics actually have data for this container
 }
 
 // Calculate rate (delta/time) from cumulative values
@@ -446,6 +499,23 @@ function calculateRates(
   }
 
   return rates;
+}
+
+// Determine which metrics are present in the data (across all containers)
+function detectMetricsFromData(presentMetricsMap: Map<string, Set<string>>): MetricDefinition[] {
+  // Collect all metrics that are present for any container
+  const allPresent = new Set<string>();
+  for (const metrics of presentMetricsMap.values()) {
+    for (const metric of metrics) {
+      allPresent.add(metric);
+    }
+  }
+
+  if (allPresent.size === 0) {
+    return AVAILABLE_METRICS;
+  }
+
+  return AVAILABLE_METRICS.filter(m => allPresent.has(m.key));
 }
 
 export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) => {
@@ -490,9 +560,9 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
   }, [data?.series, hasQueryData]);
 
   // Parse metrics from props.data.series (from Grafana's query runner)
-  const allMetrics = useMemo(() => {
+  const { allMetrics, presentMetricsMap } = useMemo(() => {
     if (!hasQueryData) {
-      return [];
+      return { allMetrics: [], presentMetricsMap: new Map<string, Set<string>>() };
     }
 
     // Find metric frames (exclude containers frame)
@@ -505,51 +575,66 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
     );
 
     if (metricsFrames.length > 0) {
-      return parseMetricsFromDataFrames(metricsFrames);
+      const result = parseMetricsFromDataFrames(metricsFrames);
+      return { allMetrics: result.metrics, presentMetricsMap: result.presentMetrics };
     }
 
-    return [];
+    return { allMetrics: [], presentMetricsMap: new Map<string, Set<string>>() };
   }, [data?.series, hasQueryData]);
 
+  // Detect which metrics are present in the data (determined by query)
   const selectedMetricDefs = useMemo(() => {
-    const selected = options.selectedMetrics || DEFAULT_METRICS;
-    return AVAILABLE_METRICS.filter((m) => selected.includes(m.key));
-  }, [options.selectedMetrics]);
+    return detectMetricsFromData(presentMetricsMap);
+  }, [presentMetricsMap]);
 
-  // Group by container and host
+  // Group by container and host - NO filtering, display everything from query
   const containersByHost = useMemo(() => {
     const byContainer = new Map<string, ContainerWithMetrics>();
-    const blacklist = options.containerBlacklist || [];
 
+    // Add all containers from the containers query result
     for (const c of containers) {
-      const isWhitelisted = (options.containerIds || []).includes(c.containerId);
-      const isBlacklisted = blacklist.includes(c.containerId);
-      const shouldInclude = options.showAllContainers ? !isBlacklisted : isWhitelisted;
+      byContainer.set(c.containerId, {
+        containerId: c.containerId,
+        containerName: c.containerName,
+        hostId: c.hostId,
+        hostName: c.hostName,
+        state: c.state,
+        healthStatus: c.healthStatus,
+        isRunning: c.isRunning,
+        isPaused: c.isPaused,
+        isUnhealthy: c.isUnhealthy,
+        metrics: [],
+        latest: null,
+        rateData: new Map(),
+        latestRates: new Map(),
+        presentMetrics: presentMetricsMap.get(c.containerId) || new Set(),
+      });
+    }
 
-      if (shouldInclude) {
-        byContainer.set(c.containerId, {
-          containerId: c.containerId,
-          containerName: c.containerName,
-          hostId: c.hostId,
-          hostName: c.hostName,
-          state: c.state,
-          healthStatus: c.healthStatus,
-          isRunning: c.isRunning,
-          isPaused: c.isPaused,
-          isUnhealthy: c.isUnhealthy,
+    // Add metrics to containers
+    for (const m of allMetrics) {
+      let container = byContainer.get(m.containerId);
+      if (!container) {
+        // Container not in containers list but has metrics - add it
+        container = {
+          containerId: m.containerId,
+          containerName: m.containerName,
+          hostId: m.hostName,
+          hostName: m.hostName,
+          state: 'undefined' as ContainerState,
+          healthStatus: 'none' as ContainerHealthStatus,
+          isRunning: false,
+          isPaused: false,
+          isUnhealthy: false,
           metrics: [],
           latest: null,
           rateData: new Map(),
           latestRates: new Map(),
-        });
+          presentMetrics: presentMetricsMap.get(m.containerId) || new Set(),
+        };
+        byContainer.set(m.containerId, container);
       }
-    }
-
-    for (const m of allMetrics) {
-      const container = byContainer.get(m.containerId);
-      if (container) {
-        container.metrics.push(m);
-      }
+      container.metrics.push(m);
     }
 
     // Sort and calculate rates
@@ -587,7 +672,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
     }
 
     return Array.from(byHost.values()).sort((a, b) => a.hostName.localeCompare(b.hostName));
-  }, [containers, allMetrics, options.showAllContainers, options.containerIds, options.containerBlacklist]);
+  }, [containers, allMetrics, presentMetricsMap]);
 
   const totalContainers = containersByHost.reduce((sum, h) => sum + h.containers.length, 0);
   const totalHosts = containersByHost.length;
@@ -597,6 +682,11 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
   }, [containersByHost]);
 
   const renderMetric = (container: ContainerWithMetrics, metricDef: MetricDefinition) => {
+    // Check if this container actually has this metric in the query results
+    if (!container.presentMetrics.has(metricDef.key)) {
+      return null;
+    }
+
     const latest = container.latest;
 
     if (metricDef.isRate) {
@@ -632,7 +722,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
       return null;
     }
 
-    const data = container.metrics
+    const metricData = container.metrics
       .map((m) => metricDef.getValue(m))
       .filter((v): v is number => v !== null && v !== undefined);
 
@@ -646,7 +736,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
           {metricDef.format(rawValue)}
           <span className={styles.metricUnit}>{metricDef.unit}</span>
         </div>
-        {data.length > 1 && <Sparkline data={data} color={metricDef.color} formatValue={metricDef.format} />}
+        {metricData.length > 1 && <Sparkline data={metricData} color={metricDef.color} formatValue={metricDef.format} />}
       </div>
     );
   };
@@ -658,7 +748,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
           No query data available.
           <br />
           <span style={{ fontSize: '11px' }}>
-            Add queries to this panel: a &quot;containers&quot; query and a &quot;metrics&quot; query from a Docker Metrics data source.
+            Add a Docker Metrics data source query to this panel.
           </span>
         </div>
       </div>
@@ -672,9 +762,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
           No containers to display.
           <br />
           <span style={{ fontSize: '11px' }}>
-            {options.showAllContainers
-              ? 'Waiting for containers to be discovered...'
-              : 'Select containers in panel options or enable "Show All Containers".'}
+            Configure container selection in the query editor.
           </span>
         </div>
       </div>
@@ -685,9 +773,9 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
     return (
       <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
         <div className={styles.emptyState}>
-          No metrics selected.
+          No metrics in query results.
           <br />
-          <span style={{ fontSize: '11px' }}>Select metrics to display in panel options under &quot;Display&quot;.</span>
+          <span style={{ fontSize: '11px' }}>Select metrics in the query editor.</span>
         </div>
       </div>
     );

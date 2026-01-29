@@ -157,7 +157,9 @@ static Dictionary<string, object?> ProjectFields(ContainerMetrics m, HashSet<str
         ["containerName"] = m.ContainerName,
         ["timestamp"] = m.Timestamp,
         ["isRunning"] = m.IsRunning,
-        ["isPaused"] = m.IsPaused
+        ["isPaused"] = m.IsPaused,
+        ["isUnhealthy"] = m.IsUnhealthy,
+        ["healthStatus"] = m.HealthStatus.ToString().ToLowerInvariant()
     };
 
     if (fields.Contains("cpupercent")) result["cpuPercent"] = m.CpuPercent;

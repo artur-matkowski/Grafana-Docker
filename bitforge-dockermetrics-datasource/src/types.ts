@@ -1,24 +1,37 @@
 import { DataSourceJsonData, DataQuery } from '@grafana/data';
 
 /**
- * Query types supported by the data source
+ * Host selection mode for container filtering
  */
-export type QueryType = 'metrics' | 'containers';
+export type HostSelectionMode = 'whitelist' | 'blacklist';
+
+/**
+ * Per-host container selection configuration
+ */
+export interface HostSelection {
+  hostId: string;
+  mode: HostSelectionMode;
+  // Whitelist: only these containers shown
+  // Blacklist: these containers excluded
+  containerIds: string[];
+  // Per-container metric overrides (whitelist mode only)
+  containerMetrics: Record<string, string[]>;
+  // Metrics to fetch (blacklist mode - applies to all included containers)
+  metrics: string[];
+}
 
 /**
  * Docker Metrics query model
  */
 export interface DockerMetricsQuery extends DataQuery {
-  queryType: QueryType;
+  // New matrix-based selection
+  hostSelections?: Record<string, HostSelection>;
 
-  // For metrics queries
-  containerIds?: string[];        // Empty = all containers from all hosts
-  containerNamePattern?: string;  // Regex filter for container names
-  metrics?: string[];             // Metrics to fetch: ['cpuPercent', 'memoryBytes', ...]
-  hostIds?: string[];             // Filter by specific hosts (empty = all)
-
-  // For container list queries (used by variables)
-  // No additional params needed - returns all containers from all configured hosts
+  // Legacy fields (kept for backward compatibility)
+  metrics?: string[];
+  containerNamePattern?: string;
+  containerIds?: string[];
+  hostIds?: string[];
 }
 
 /**
@@ -46,24 +59,17 @@ export interface DockerMetricsSecureJsonData {
 }
 
 /**
- * Available metrics that can be queried
+ * All available metrics
  */
-export const AVAILABLE_METRICS = [
-  { value: 'cpuPercent', label: 'CPU %' },
-  { value: 'memoryBytes', label: 'Memory (MB)' },
-  { value: 'memoryPercent', label: 'Memory %' },
-  { value: 'networkRxBytes', label: 'Network RX (MB)' },
-  { value: 'networkTxBytes', label: 'Network TX (MB)' },
-  { value: 'diskReadBytes', label: 'Disk Read (MB)' },
-  { value: 'diskWriteBytes', label: 'Disk Write (MB)' },
-  { value: 'uptimeSeconds', label: 'Uptime (seconds)' },
-  { value: 'cpuPressureSome', label: 'CPU Pressure' },
-  { value: 'cpuPressureFull', label: 'CPU Pressure (full)' },
-  { value: 'memoryPressureSome', label: 'Memory Pressure' },
-  { value: 'memoryPressureFull', label: 'Memory Pressure (full)' },
-  { value: 'ioPressureSome', label: 'I/O Pressure' },
-  { value: 'ioPressureFull', label: 'I/O Pressure (full)' },
-] as const;
+export const ALL_METRICS = [
+  'cpuPercent', 'memoryBytes', 'memoryPercent',
+  'networkRxBytes', 'networkTxBytes',
+  'diskReadBytes', 'diskWriteBytes',
+  'uptimeSeconds',
+  'cpuPressureSome', 'cpuPressureFull',
+  'memoryPressureSome', 'memoryPressureFull',
+  'ioPressureSome', 'ioPressureFull',
+];
 
 /**
  * Default metrics to query when none specified
@@ -74,6 +80,5 @@ export const DEFAULT_METRICS = ['cpuPercent', 'memoryBytes'];
  * Default query
  */
 export const DEFAULT_QUERY: Partial<DockerMetricsQuery> = {
-  queryType: 'metrics',
   metrics: DEFAULT_METRICS,
 };
