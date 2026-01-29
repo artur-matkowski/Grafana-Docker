@@ -147,6 +147,12 @@ export interface MetricDefinition {
   format: (value: number) => string;
   getValue: (snapshot: ContainerMetrics) => number | null;
   isRate?: boolean;
+  fixedMin?: number;
+  fixedMax?: number;
+  // For combined metrics (e.g., networkCombined)
+  secondaryColor?: string;
+  isCombined?: boolean;
+  combineKeys?: string[];
 }
 
 // All available metrics
@@ -158,6 +164,8 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
     color: '#5794F2',
     format: (v) => v.toFixed(1),
     getValue: (s) => s.cpuPercent,
+    fixedMin: 0,
+    fixedMax: 100,
   },
   {
     key: 'memoryBytes',
@@ -174,6 +182,21 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
     color: '#73BF69',
     format: (v) => v.toFixed(1),
     getValue: (s) => s.memoryPercent,
+    fixedMin: 0,
+    fixedMax: 100,
+  },
+  // Combined network metric - replaces individual RX/TX when both are present
+  {
+    key: 'networkCombined',
+    label: 'Net I/O',
+    unit: 'KB/s',
+    color: '#F2495C',        // TX color
+    secondaryColor: '#FF9830', // RX color
+    format: (v) => v.toFixed(1),
+    getValue: () => null,    // Special handling - uses combineKeys
+    isCombined: true,
+    combineKeys: ['networkRxBytes', 'networkTxBytes'],
+    isRate: true,
   },
   {
     key: 'networkRxBytes',
@@ -219,6 +242,8 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
     color: '#FF6B6B',
     format: (v) => v.toFixed(2),
     getValue: (s) => s.cpuPressure?.some10 ?? null,
+    fixedMin: 0,
+    fixedMax: 100,
   },
   {
     key: 'cpuPressureFull',
@@ -227,6 +252,8 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
     color: '#EE5A5A',
     format: (v) => v.toFixed(2),
     getValue: (s) => s.cpuPressure?.full10 ?? null,
+    fixedMin: 0,
+    fixedMax: 100,
   },
   // PSI Memory metrics
   {
@@ -236,6 +263,8 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
     color: '#4ECDC4',
     format: (v) => v.toFixed(2),
     getValue: (s) => s.memoryPressure?.some10 ?? null,
+    fixedMin: 0,
+    fixedMax: 100,
   },
   {
     key: 'memoryPressureFull',
@@ -244,6 +273,8 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
     color: '#3DBDB5',
     format: (v) => v.toFixed(2),
     getValue: (s) => s.memoryPressure?.full10 ?? null,
+    fixedMin: 0,
+    fixedMax: 100,
   },
   // PSI I/O metrics
   {
@@ -253,6 +284,8 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
     color: '#FFE66D',
     format: (v) => v.toFixed(2),
     getValue: (s) => s.ioPressure?.some10 ?? null,
+    fixedMin: 0,
+    fixedMax: 100,
   },
   {
     key: 'ioPressureFull',
@@ -261,6 +294,8 @@ export const AVAILABLE_METRICS: MetricDefinition[] = [
     color: '#FFD93D',
     format: (v) => v.toFixed(2),
     getValue: (s) => s.ioPressure?.full10 ?? null,
+    fixedMin: 0,
+    fixedMax: 100,
   },
 ];
 
