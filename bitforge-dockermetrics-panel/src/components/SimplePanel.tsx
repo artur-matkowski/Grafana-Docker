@@ -461,6 +461,32 @@ const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatV
   );
 };
 
+// Format bytes/s in compact resistor-style notation (e.g., 1k1 = 1.1 KB/s, 2m5 = 2.5 MB/s)
+function formatBytesCompact(kbps: number): string {
+  if (kbps < 1) {
+    // Sub-KB: show as bytes
+    const bytes = Math.round(kbps * 1024);
+    return bytes === 0 ? '0' : `${bytes}`;
+  }
+  if (kbps < 1024) {
+    // KB range: use 'k' notation
+    const whole = Math.floor(kbps);
+    const decimal = Math.round((kbps - whole) * 10);
+    if (decimal === 0 || decimal === 10) {
+      return `${decimal === 10 ? whole + 1 : whole}k`;
+    }
+    return `${whole}k${decimal}`;
+  }
+  // MB range: use 'm' notation
+  const mbps = kbps / 1024;
+  const whole = Math.floor(mbps);
+  const decimal = Math.round((mbps - whole) * 10);
+  if (decimal === 0 || decimal === 10) {
+    return `${decimal === 10 ? whole + 1 : whole}m`;
+  }
+  return `${whole}m${decimal}`;
+}
+
 // DualSparkline for combined bidirectional metrics (e.g., Net RX/TX)
 interface DualSparklineProps {
   upperData: number[];     // TX (upload) - shown above center
@@ -468,7 +494,6 @@ interface DualSparklineProps {
   upperColor: string;      // TX color
   lowerColor: string;      // RX color
   height?: number;
-  formatValue: (v: number) => string;
 }
 
 const DualSparkline: React.FC<DualSparklineProps> = ({
@@ -477,7 +502,6 @@ const DualSparkline: React.FC<DualSparklineProps> = ({
   upperColor,
   lowerColor,
   height = 40,
-  formatValue,
 }) => {
   // Need at least 2 points for either dataset
   if (upperData.length < 2 && lowerData.length < 2) {
@@ -511,7 +535,7 @@ const DualSparkline: React.FC<DualSparklineProps> = ({
     })
     .join(' ');
 
-  const scaleMaxLabel = formatValue(maxScale);
+  const scaleMaxLabel = formatBytesCompact(maxScale);
 
   return (
     <div style={{ position: 'relative', height, display: 'flex' }}>
@@ -541,20 +565,20 @@ const DualSparkline: React.FC<DualSparklineProps> = ({
       </div>
       <div
         style={{
-          width: '32px',
+          width: '28px',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'space-between',
-          fontSize: '8px',
+          fontSize: '7px',
           color: '#666',
           textAlign: 'right',
-          paddingLeft: '4px',
+          paddingLeft: '2px',
           flexShrink: 0,
         }}
       >
-        <span style={{ color: upperColor }}>+{scaleMaxLabel}</span>
+        <span style={{ color: upperColor }}>{scaleMaxLabel}</span>
         <span>0</span>
-        <span style={{ color: lowerColor }}>-{scaleMaxLabel}</span>
+        <span style={{ color: lowerColor }}>{scaleMaxLabel}</span>
       </div>
     </div>
   );
@@ -880,7 +904,6 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
               lowerData={rxRateData}
               upperColor={metricDef.color}
               lowerColor={metricDef.secondaryColor || '#FF9830'}
-              formatValue={(v) => v.toFixed(1)}
             />
           )}
         </div>
