@@ -97,7 +97,7 @@ function parseContainersFromDataFrame(frame: DataFrame): ContainerInfo[] {
 // Result type for parseMetricsFromDataFrames - includes per-container metric tracking
 interface ParsedMetricsResult {
   metrics: ContainerMetrics[];
-  presentMetrics: Map<string, Set<string>>; // containerId -> set of metric keys
+  presentMetrics: Map<string, Set<string>>; // hostId:containerName -> set of metric keys
 }
 
 // Parse metrics from Grafana's DataFrame format (from props.data.series)
@@ -155,19 +155,20 @@ function parseMetricsFromDataFrames(frames: DataFrame[]): ParsedMetricsResult {
       metricKey = 'ioPressureFull';
     }
 
-    // Track that this container has this metric
-    if (metricKey && containerId) {
-      if (!presentMetrics.has(containerId)) {
-        presentMetrics.set(containerId, new Set());
+    // Track that this container has this metric (keyed by hostName:containerName for stability across container recreates)
+    if (metricKey && containerName && hostName) {
+      const containerKey = `${hostName}:${containerName}`;
+      if (!presentMetrics.has(containerKey)) {
+        presentMetrics.set(containerKey, new Set());
       }
-      presentMetrics.get(containerId)!.add(metricKey);
+      presentMetrics.get(containerKey)!.add(metricKey);
     }
 
     for (let i = 0; i < frame.length; i++) {
       const timestamp = new Date(timeField.values[i] as number).toISOString();
       const value = valueField.values[i] as number;
 
-      const key = `${containerId}:${timestamp}`;
+      const key = `${hostName}:${containerName}:${timestamp}`;
       if (!metricsMap.has(key)) {
         metricsMap.set(key, {
           hostId: hostName,
@@ -771,12 +772,14 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
   }, [presentMetricsMap]);
 
   // Group by container and host - NO filtering, display everything from query
+  // Uses hostId:containerName as key for stability across container recreates
   const containersByHost = useMemo(() => {
     const byContainer = new Map<string, ContainerWithMetrics>();
 
     // Add all containers from the containers query result
     for (const c of containers) {
-      byContainer.set(c.containerId, {
+      const containerKey = `${c.hostId}:${c.containerName}`;
+      byContainer.set(containerKey, {
         containerId: c.containerId,
         containerName: c.containerName,
         hostId: c.hostId,
@@ -790,13 +793,14 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
         latest: null,
         rateData: new Map(),
         latestRates: new Map(),
-        presentMetrics: presentMetricsMap.get(c.containerId) || new Set(),
+        presentMetrics: presentMetricsMap.get(containerKey) || new Set(),
       });
     }
 
     // Add metrics to containers
     for (const m of allMetrics) {
-      let container = byContainer.get(m.containerId);
+      const containerKey = `${m.hostName}:${m.containerName}`;
+      let container = byContainer.get(containerKey);
       if (!container) {
         // Container not in containers list but has metrics - add it
         container = {
@@ -813,9 +817,9 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
           latest: null,
           rateData: new Map(),
           latestRates: new Map(),
-          presentMetrics: presentMetricsMap.get(m.containerId) || new Set(),
+          presentMetrics: presentMetricsMap.get(containerKey) || new Set(),
         };
-        byContainer.set(m.containerId, container);
+        byContainer.set(containerKey, container);
       }
       container.metrics.push(m);
     }
@@ -1046,7 +1050,7 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
     );
 
     return (
-      <div key={container.containerId} className={cardClassName}>
+      <div key={`${container.hostId}:${container.containerName}`} className={cardClassName}>
         <div className={styles.containerHeader}>
           <span className={styles.containerName} title={container.containerName}>
             {container.containerName.replace(/^\//, '')}
