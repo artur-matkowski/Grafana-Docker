@@ -1,35 +1,9 @@
 import { PanelPlugin } from '@grafana/data';
-import { SimpleOptions, DEFAULT_METRICS } from './types';
+import { SimpleOptions } from './types';
 import { SimplePanel } from './components/SimplePanel';
-import { ContainerSelectorEditor } from './components/ContainerSelectorEditor';
-import { MetricSelectorEditor } from './components/MetricSelectorEditor';
 
 export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOptions((builder) => {
   return builder
-    .addBooleanSwitch({
-      path: 'showAllContainers',
-      name: 'Show All Containers',
-      description: 'Automatically include all containers (including new ones)',
-      defaultValue: true,
-      category: ['Containers'],
-    })
-    .addCustomEditor({
-      id: 'containerSelector',
-      path: 'containerIds',
-      name: 'Select Containers',
-      description: 'Choose which containers to display metrics for',
-      category: ['Containers'],
-      editor: ContainerSelectorEditor,
-    })
-    .addCustomEditor({
-      id: 'metricSelector',
-      path: 'selectedMetrics',
-      name: 'Display Metrics',
-      description: 'Choose which metrics to show for each container',
-      category: ['Display'],
-      editor: MetricSelectorEditor,
-      defaultValue: DEFAULT_METRICS,
-    })
     .addBooleanSwitch({
       path: 'stripMode',
       name: 'Strip Mode',

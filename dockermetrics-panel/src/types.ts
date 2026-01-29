@@ -63,16 +63,12 @@ export function getStateDisplay(state: ContainerState): { label: string; color: 
   }
 }
 
-// Panel options
+// Panel options - layout only (filtering moved to data source query)
 export interface SimpleOptions {
-  containerIds: string[];           // Whitelist - containers to show when showAllContainers is false
-  containerBlacklist: string[];     // Blacklist - containers to exclude when showAllContainers is true
-  showAllContainers: boolean;
-  selectedMetrics: string[];
   containersPerRow: number;
   metricsPerRow: number;
   refreshInterval: number; // Refresh interval in seconds
-  stripMode: boolean;               // Strip mode - hide host headers, show all containers in a single grid
+  stripMode: boolean;      // Strip mode - hide host headers, show all containers in a single grid
 }
 
 // Container info for listing

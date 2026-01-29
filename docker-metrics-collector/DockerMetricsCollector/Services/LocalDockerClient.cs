@@ -89,10 +89,15 @@ public class LocalDockerClient
                 var stateStr = container.GetProperty("State").GetString();
                 var state = ContainerStateExtensions.ParseDockerState(stateStr);
 
+                // Note: /containers/json doesn't include full health info
+                // Health status will be populated from inspect endpoint for metrics
+                ContainerHealthStatus healthStatus = ContainerHealthStatus.None;
+
                 result.Add(new ContainerInfo(
                     ContainerId: id,
                     ContainerName: names,
-                    State: state
+                    State: state,
+                    HealthStatus: healthStatus
                 ));
             }
 
@@ -113,8 +118,8 @@ public class LocalDockerClient
         // Get PSI metrics from cgroups
         var (cpuPsi, memoryPsi, ioPsi) = _psiReader.GetContainerPsi(containerId);
 
-        // Get container uptime from inspect endpoint
-        var uptimeSeconds = await GetContainerUptimeAsync(containerId);
+        // Get container uptime and health status from inspect endpoint
+        var (uptimeSeconds, healthStatus) = await GetContainerInspectDataAsync(containerId);
 
         // For paused containers, return minimal metrics with PSI
         if (state.IsPaused())
@@ -132,6 +137,7 @@ public class LocalDockerClient
                 DiskWriteBytes: 0,
                 UptimeSeconds: uptimeSeconds,
                 State: state,
+                HealthStatus: healthStatus,
                 CpuPressure: cpuPsi,
                 MemoryPressure: memoryPsi,
                 IoPressure: ioPsi
@@ -149,7 +155,7 @@ public class LocalDockerClient
                 return null;
 
             var stats = JsonSerializer.Deserialize<JsonElement>(json);
-            return ParseContainerStats(containerId, containerName, state, stats, uptimeSeconds, cpuPsi, memoryPsi, ioPsi);
+            return ParseContainerStats(containerId, containerName, state, healthStatus, stats, uptimeSeconds, cpuPsi, memoryPsi, ioPsi);
         }
         catch (Exception ex)
         {
@@ -159,37 +165,46 @@ public class LocalDockerClient
     }
 
     /// <summary>
-    /// Get container uptime in seconds from the StartedAt field.
+    /// Get container uptime and health status from the inspect endpoint.
     /// </summary>
-    private async Task<long> GetContainerUptimeAsync(string containerId)
+    private async Task<(long uptimeSeconds, ContainerHealthStatus healthStatus)> GetContainerInspectDataAsync(string containerId)
     {
         try
         {
             var response = await _httpClient.GetAsync($"/containers/{containerId}/json");
             if (!response.IsSuccessStatusCode)
-                return 0;
+                return (0, ContainerHealthStatus.None);
 
             var json = await response.Content.ReadAsStringAsync();
             var container = JsonSerializer.Deserialize<JsonElement>(json);
 
             var stateObj = container.GetProperty("State");
+
+            // Get uptime
+            long uptimeSeconds = 0;
             var startedAtStr = stateObj.GetProperty("StartedAt").GetString();
-
-            if (string.IsNullOrEmpty(startedAtStr))
-                return 0;
-
-            if (DateTimeOffset.TryParse(startedAtStr, out var startedAt))
+            if (!string.IsNullOrEmpty(startedAtStr) && DateTimeOffset.TryParse(startedAtStr, out var startedAt))
             {
                 var uptime = DateTimeOffset.UtcNow - startedAt;
-                return (long)Math.Max(0, uptime.TotalSeconds);
+                uptimeSeconds = (long)Math.Max(0, uptime.TotalSeconds);
             }
 
-            return 0;
+            // Get health status
+            ContainerHealthStatus healthStatus = ContainerHealthStatus.None;
+            if (stateObj.TryGetProperty("Health", out var health) &&
+                health.TryGetProperty("Status", out var healthStatusProp))
+            {
+                healthStatus = ContainerHealthStatusExtensions.ParseDockerHealthStatus(
+                    healthStatusProp.GetString()
+                );
+            }
+
+            return (uptimeSeconds, healthStatus);
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to get uptime for container {ContainerId}", containerId);
-            return 0;
+            _logger.LogDebug(ex, "Failed to get inspect data for container {ContainerId}", containerId);
+            return (0, ContainerHealthStatus.None);
         }
     }
 
@@ -283,6 +298,7 @@ public class LocalDockerClient
         string containerId,
         string containerName,
         ContainerState state,
+        ContainerHealthStatus healthStatus,
         JsonElement stats,
         long uptimeSeconds,
         PsiMetrics? cpuPsi,
@@ -351,6 +367,7 @@ public class LocalDockerClient
                 DiskWriteBytes: diskWrite,
                 UptimeSeconds: uptimeSeconds,
                 State: state,
+                HealthStatus: healthStatus,
                 CpuPressure: cpuPsi,
                 MemoryPressure: memoryPsi,
                 IoPressure: ioPsi

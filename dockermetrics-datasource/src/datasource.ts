@@ -53,17 +53,12 @@ export class DockerMetricsDataSource extends DataSourceWithBackend<
    * Filter valid queries (skip empty/disabled)
    */
   filterQuery(query: DockerMetricsQuery): boolean {
-    // Skip queries without a type
-    if (!query.queryType) {
-      return false;
+    // New matrix mode: check if hostSelections has any entries
+    if (query.hostSelections && Object.keys(query.hostSelections).length > 0) {
+      return true;
     }
-
-    // For metrics queries, ensure at least one metric is selected
-    if (query.queryType === 'metrics') {
-      return (query.metrics?.length ?? 0) > 0;
-    }
-
-    return true;
+    // Legacy mode: ensure at least one metric is selected
+    return (query.metrics?.length ?? 0) > 0;
   }
 
   /**
