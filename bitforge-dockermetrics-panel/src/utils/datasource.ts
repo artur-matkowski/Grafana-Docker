@@ -1,6 +1,9 @@
 import { DataQueryRequest, dateTime } from '@grafana/data';
 import { getDataSourceSrv } from '@grafana/runtime';
-import { ContainerInfo, ContainerState, VALID_CONTAINER_STATES, isStateRunning, isStatePaused, DockerMetricsQuery } from '../types';
+import { ContainerInfo, ContainerState, ContainerHealthStatus, VALID_CONTAINER_STATES, VALID_HEALTH_STATUSES, isStateRunning, isStatePaused, isHealthUnhealthy, DockerMetricsQuery } from '../types';
+
+// Re-export helper functions from types for use in SimplePanel
+export { isStateRunning, isStatePaused, isHealthUnhealthy };
 
 /**
  * Convert Observable or Promise to Promise for data source queries.
@@ -25,6 +28,21 @@ export function normalizeContainerState(rawState: unknown): ContainerState {
     return normalizedState as ContainerState;
   }
   return 'invalid';
+}
+
+/**
+ * Validate and normalize container health status from API response.
+ * Handles case mismatches and missing values.
+ */
+export function normalizeHealthStatus(rawStatus: unknown): ContainerHealthStatus {
+  if (rawStatus === undefined || rawStatus === null || rawStatus === '') {
+    return 'none';
+  }
+  const normalized = typeof rawStatus === 'string' ? rawStatus.toLowerCase() : String(rawStatus);
+  if (VALID_HEALTH_STATUSES.includes(normalized as ContainerHealthStatus)) {
+    return normalized as ContainerHealthStatus;
+  }
+  return 'none';
 }
 
 /**
@@ -65,8 +83,10 @@ function parseContainersFromFrame(frame: {
   const containerNameField = frame.fields.find((f) => f.name === 'containerName');
   const hostNameField = frame.fields.find((f) => f.name === 'hostName');
   const stateField = frame.fields.find((f) => f.name === 'state');
+  const healthStatusField = frame.fields.find((f) => f.name === 'healthStatus');
   const isRunningField = frame.fields.find((f) => f.name === 'isRunning');
   const isPausedField = frame.fields.find((f) => f.name === 'isPaused');
+  const isUnhealthyField = frame.fields.find((f) => f.name === 'isUnhealthy');
 
   if (!containerIdField || !containerNameField) {
     return [];
@@ -74,6 +94,7 @@ function parseContainersFromFrame(frame: {
 
   for (let i = 0; i < frame.length; i++) {
     const state = normalizeContainerState(stateField?.values[i]);
+    const healthStatus = normalizeHealthStatus(healthStatusField?.values[i]);
 
     containers.push({
       hostId: (hostNameField?.values[i] as string) || 'default',
@@ -81,8 +102,10 @@ function parseContainersFromFrame(frame: {
       containerId: containerIdField.values[i] as string,
       containerName: containerNameField.values[i] as string,
       state,
+      healthStatus,
       isRunning: (isRunningField?.values[i] as boolean) ?? isStateRunning(state),
       isPaused: (isPausedField?.values[i] as boolean) ?? isStatePaused(state),
+      isUnhealthy: (isUnhealthyField?.values[i] as boolean) ?? isHealthUnhealthy(healthStatus),
     });
   }
 
@@ -91,6 +114,7 @@ function parseContainersFromFrame(frame: {
 
 /**
  * Fetch container list via data source query API.
+ * Used by the panel editor (ContainerSelector) which runs in authenticated context.
  */
 export async function fetchContainersViaDataSource(dataSourceUid: string): Promise<ContainerInfo[]> {
   const srv = getDataSourceSrv();
