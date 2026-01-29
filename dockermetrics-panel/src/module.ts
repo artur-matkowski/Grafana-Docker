@@ -1,5 +1,5 @@
 import { PanelPlugin } from '@grafana/data';
-import { SimpleOptions } from './types';
+import { SimpleOptions, ALL_CONTROL_ACTIONS } from './types';
 import { SimplePanel } from './components/SimplePanel';
 
 export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOptions((builder) => {
@@ -46,5 +46,37 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
         max: 300,
         integer: true,
       },
+    })
+    .addBooleanSwitch({
+      path: 'enableControls',
+      name: 'Enable Container Controls',
+      description: 'Show start/stop/restart/pause/unpause buttons on container cards',
+      defaultValue: false,
+      category: ['Controls'],
+    })
+    .addMultiSelect({
+      path: 'allowedActions',
+      name: 'Allowed Actions',
+      description: 'Which container actions to show (requires datasource-level permission)',
+      defaultValue: ALL_CONTROL_ACTIONS,
+      category: ['Controls'],
+      settings: {
+        options: [
+          { label: 'Start', value: 'start', description: 'Start stopped containers' },
+          { label: 'Stop', value: 'stop', description: 'Stop running containers' },
+          { label: 'Restart', value: 'restart', description: 'Restart containers' },
+          { label: 'Pause', value: 'pause', description: 'Pause running containers' },
+          { label: 'Unpause', value: 'unpause', description: 'Resume paused containers' },
+        ],
+      },
+      showIf: (config) => config.enableControls === true,
+    })
+    .addBooleanSwitch({
+      path: 'confirmDangerousActions',
+      name: 'Confirm Dangerous Actions',
+      description: 'Show confirmation dialog for stop and restart actions',
+      defaultValue: true,
+      category: ['Controls'],
+      showIf: (config) => config.enableControls === true,
     });
 });

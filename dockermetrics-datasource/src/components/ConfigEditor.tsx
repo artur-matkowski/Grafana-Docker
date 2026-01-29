@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
-import { DataSourcePluginOptionsEditorProps } from '@grafana/data';
-import { InlineField, Input, Button, VerticalGroup, HorizontalGroup, Switch, IconButton } from '@grafana/ui';
-import { DockerMetricsDataSourceOptions, HostConfig } from '../types';
+import { DataSourcePluginOptionsEditorProps, SelectableValue } from '@grafana/data';
+import { InlineField, Input, Button, VerticalGroup, HorizontalGroup, Switch, IconButton, MultiSelect, Alert } from '@grafana/ui';
+import { DockerMetricsDataSourceOptions, HostConfig, ControlAction, ALL_CONTROL_ACTIONS } from '../types';
 import { css } from '@emotion/css';
 
 interface Props extends DataSourcePluginOptionsEditorProps<DockerMetricsDataSourceOptions> {}
@@ -27,11 +27,59 @@ const styles = {
   addButton: css`
     margin-top: 8px;
   `,
+  securitySection: css`
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  `,
+  securityCard: css`
+    background: rgba(255, 152, 48, 0.05);
+    border: 1px solid rgba(255, 152, 48, 0.2);
+    border-radius: 4px;
+    padding: 16px;
+    margin-top: 12px;
+  `,
 };
+
+const controlActionOptions: Array<SelectableValue<ControlAction>> = ALL_CONTROL_ACTIONS.map((action) => ({
+  label: action.charAt(0).toUpperCase() + action.slice(1),
+  value: action,
+  description: getActionDescription(action),
+}));
+
+function getActionDescription(action: ControlAction): string {
+  switch (action) {
+    case 'start':
+      return 'Start a stopped container';
+    case 'stop':
+      return 'Stop a running container';
+    case 'restart':
+      return 'Restart a container';
+    case 'pause':
+      return 'Pause a running container';
+    case 'unpause':
+      return 'Resume a paused container';
+  }
+}
 
 export function ConfigEditor(props: Props) {
   const { options, onOptionsChange } = props;
   const hosts = options.jsonData.hosts || [];
+  const enableContainerControls = options.jsonData.enableContainerControls || false;
+  const allowedControlActions = options.jsonData.allowedControlActions || [];
+
+  const updateJsonData = useCallback(
+    (updates: Partial<DockerMetricsDataSourceOptions>) => {
+      onOptionsChange({
+        ...options,
+        jsonData: {
+          ...options.jsonData,
+          ...updates,
+        },
+      });
+    },
+    [options, onOptionsChange]
+  );
 
   const updateHosts = useCallback(
     (newHosts: HostConfig[]) => {
@@ -135,6 +183,65 @@ export function ConfigEditor(props: Props) {
           No hosts configured. Click &quot;Add Host&quot; to add a Docker Metrics Collector agent.
         </p>
       )}
+
+      <div className={styles.securitySection}>
+        <h4>Container Controls</h4>
+        <p style={{ color: '#888', fontSize: '12px', marginBottom: '12px' }}>
+          Enable container control actions (start, stop, restart, pause, unpause) from dashboards.
+          This allows users to manage containers directly from panels.
+        </p>
+
+        <div className={styles.securityCard}>
+          <VerticalGroup spacing="md">
+            <HorizontalGroup>
+              <Switch
+                value={enableContainerControls}
+                onChange={(e) => {
+                  const enabled = e.currentTarget.checked;
+                  updateJsonData({
+                    enableContainerControls: enabled,
+                    allowedControlActions: enabled ? ALL_CONTROL_ACTIONS : [],
+                  });
+                }}
+                label="Enable Container Controls"
+              />
+            </HorizontalGroup>
+
+            {enableContainerControls && (
+              <>
+                <Alert title="Security Warning" severity="warning">
+                  Container controls allow dashboard users to manage Docker containers.
+                  Only enable specific actions that are safe for your environment.
+                </Alert>
+
+                <InlineField
+                  label="Allowed Actions"
+                  labelWidth={16}
+                  tooltip="Select which container actions are permitted. Leave empty to allow all actions."
+                >
+                  <MultiSelect
+                    options={controlActionOptions}
+                    value={allowedControlActions.map((a) => ({ label: a, value: a }))}
+                    onChange={(selected) => {
+                      updateJsonData({
+                        allowedControlActions: selected.map((s) => s.value as ControlAction),
+                      });
+                    }}
+                    placeholder="Select allowed actions..."
+                    width={40}
+                  />
+                </InlineField>
+
+                {allowedControlActions.length === 0 && (
+                  <p style={{ color: '#FF9830', fontSize: '11px', marginTop: '-8px' }}>
+                    Warning: No actions selected. All actions will be blocked until you select at least one.
+                  </p>
+                )}
+              </>
+            )}
+          </VerticalGroup>
+        </div>
+      </div>
     </VerticalGroup>
   );
 }

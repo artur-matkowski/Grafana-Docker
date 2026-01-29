@@ -1,9 +1,11 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useCallback } from 'react';
 import { PanelProps, DataFrame, FieldType } from '@grafana/data';
-import { SimpleOptions, ContainerMetrics, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, ContainerState, ContainerHealthStatus, getStateDisplay, getPulseType } from 'types';
+import { SimpleOptions, ContainerMetrics, ContainerInfo, AVAILABLE_METRICS, MetricDefinition, ContainerState, ContainerHealthStatus, getStateDisplay, getPulseType, ControlAction, ALL_CONTROL_ACTIONS } from 'types';
 import { css, cx, keyframes } from '@emotion/css';
-import { useStyles2 } from '@grafana/ui';
+import { useStyles2, Alert } from '@grafana/ui';
 import { normalizeContainerState, normalizeHealthStatus, isStateRunning, isStatePaused, isHealthUnhealthy } from '../utils/datasource';
+import { useContainerControl } from '../hooks/useContainerControl';
+import { ContainerControls } from './ContainerControls';
 
 // Format uptime seconds to human-readable string
 const formatUptime = (seconds: number): string => {
@@ -521,7 +523,42 @@ function detectMetricsFromData(presentMetricsMap: Map<string, Set<string>>): Met
 export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) => {
   const containersPerRow = options.containersPerRow || 0;
   const metricsPerRow = options.metricsPerRow || 0;
+  const enableControls = options.enableControls || false;
+  const allowedActions = options.allowedActions || ALL_CONTROL_ACTIONS;
+  const confirmDangerousActions = options.confirmDangerousActions ?? true;
   const styles = useStyles2(getStyles);
+
+  // Container control hook
+  const { executeAction, loading: controlLoading, error: controlError, clearError } = useContainerControl();
+
+  // Extract datasource UID from the query request
+  const datasourceUid = useMemo(() => {
+    const targets = data?.request?.targets;
+    if (targets && targets.length > 0) {
+      const ds = targets[0]?.datasource;
+      if (ds && typeof ds === 'object' && 'uid' in ds) {
+        return (ds as { uid: string }).uid;
+      }
+    }
+    return '';
+  }, [data?.request?.targets]);
+
+  // Handle control action
+  const handleControlAction = useCallback(
+    async (action: ControlAction, containerId: string, hostId: string) => {
+      if (!datasourceUid) {
+        console.error('Cannot execute control action: datasource UID not available');
+        return;
+      }
+      try {
+        await executeAction(action, containerId, hostId, datasourceUid);
+      } catch (err) {
+        // Error is already stored in hook state
+        console.error('Control action failed:', err);
+      }
+    },
+    [executeAction, datasourceUid]
+  );
 
   const containerGridStyle = {
     gridTemplateColumns:
@@ -808,6 +845,18 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
               {formatUptime(container.latest.uptimeSeconds)}
             </span>
           )}
+          {enableControls && datasourceUid && (
+            <ContainerControls
+              containerId={container.containerId}
+              containerName={container.containerName}
+              hostId={container.hostId}
+              state={state}
+              allowedActions={allowedActions}
+              confirmDangerousActions={confirmDangerousActions}
+              onAction={handleControlAction}
+              loading={controlLoading}
+            />
+          )}
         </div>
         <div className={styles.metricsGrid} style={metricsGridStyle}>
           {selectedMetricDefs.map((metricDef) => renderMetric(container, metricDef))}
@@ -820,6 +869,15 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
   if (options.stripMode) {
     return (
       <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
+        {controlError && (
+          <Alert
+            title="Control action failed"
+            severity="error"
+            onRemove={clearError}
+          >
+            {controlError}
+          </Alert>
+        )}
         <div className={styles.containersGrid} style={containerGridStyle}>
           {allContainersFlat.map(renderContainerCard)}
         </div>
@@ -830,6 +888,16 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
   // Normal mode
   return (
     <div className={cx(styles.wrapper, css`width: ${width}px; height: ${height}px;`)}>
+      {controlError && (
+        <Alert
+          title="Control action failed"
+          severity="error"
+          onRemove={clearError}
+        >
+          {controlError}
+        </Alert>
+      )}
+
       <div className={styles.summary}>
         <span>{totalHosts} host{totalHosts !== 1 ? 's' : ''}</span>
         <span>{totalContainers} container{totalContainers !== 1 ? 's' : ''}</span>

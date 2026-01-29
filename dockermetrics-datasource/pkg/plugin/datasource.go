@@ -45,7 +45,9 @@ type HostConfig struct {
 
 // DatasourceSettings contains the data source configuration
 type DatasourceSettings struct {
-	Hosts []HostConfig `json:"hosts"`
+	Hosts                  []HostConfig `json:"hosts"`
+	EnableContainerControls bool        `json:"enableContainerControls"`
+	AllowedControlActions   []string    `json:"allowedControlActions"`
 }
 
 // Datasource is a data source instance
@@ -105,14 +107,19 @@ type HostSelection struct {
 
 // Query model from frontend
 type QueryModel struct {
-	QueryType      string                    `json:"queryType"`
-	HostSelections map[string]HostSelection  `json:"hostSelections"`
+	QueryType      string                   `json:"queryType"`
+	HostSelections map[string]HostSelection `json:"hostSelections"`
 
 	// Legacy fields (kept for backward compatibility)
 	ContainerIDs         []string `json:"containerIds"`
 	ContainerNamePattern string   `json:"containerNamePattern"`
 	Metrics              []string `json:"metrics"`
 	HostIDs              []string `json:"hostIds"`
+
+	// Control action fields (for queryType: "control")
+	ControlAction   string `json:"controlAction"`   // start, stop, restart, pause, unpause
+	TargetContainer string `json:"targetContainer"` // container ID
+	TargetHost      string `json:"targetHost"`      // host ID
 }
 
 // AllMetrics lists all available metrics
@@ -155,6 +162,8 @@ func (d *Datasource) query(ctx context.Context, pCtx backend.PluginContext, quer
 		return d.queryMetrics(ctx, query, qm)
 	case "containers":
 		return d.queryContainers(ctx, qm)
+	case "control":
+		return d.queryControl(ctx, qm)
 	default:
 		// Treat unknown as metrics query for backward compatibility
 		return d.queryMetrics(ctx, query, qm)
@@ -1048,6 +1057,141 @@ func (d *Datasource) CheckHealth(ctx context.Context, req *backend.CheckHealthRe
 		Status:  backend.HealthStatusError,
 		Message: fmt.Sprintf("Failed to connect to any host. Last error: %s", lastError),
 	}, nil
+}
+
+// ValidControlActions lists all supported container control actions
+var ValidControlActions = []string{"start", "stop", "restart", "pause", "unpause"}
+
+// queryControl executes a container control action via the Docker agent
+func (d *Datasource) queryControl(ctx context.Context, qm QueryModel) backend.DataResponse {
+	var response backend.DataResponse
+
+	// Validate that controls are enabled in datasource settings
+	if !d.settings.EnableContainerControls {
+		response.Error = fmt.Errorf("container controls are disabled in datasource settings")
+		return response
+	}
+
+	// Validate action is provided
+	if qm.ControlAction == "" {
+		response.Error = fmt.Errorf("controlAction is required")
+		return response
+	}
+
+	// Validate action is in the global valid list
+	if !contains(ValidControlActions, qm.ControlAction) {
+		response.Error = fmt.Errorf("invalid control action: %s", qm.ControlAction)
+		return response
+	}
+
+	// Validate action is in the datasource's allowed list
+	if len(d.settings.AllowedControlActions) > 0 && !contains(d.settings.AllowedControlActions, qm.ControlAction) {
+		response.Error = fmt.Errorf("action '%s' is not allowed by datasource settings", qm.ControlAction)
+		return response
+	}
+
+	// Validate target container and host are provided
+	if qm.TargetContainer == "" {
+		response.Error = fmt.Errorf("targetContainer is required")
+		return response
+	}
+	if qm.TargetHost == "" {
+		response.Error = fmt.Errorf("targetHost is required")
+		return response
+	}
+
+	// Find the host by ID
+	var targetHost *HostConfig
+	for _, h := range d.settings.Hosts {
+		if h.ID == qm.TargetHost && h.Enabled {
+			targetHost = &h
+			break
+		}
+	}
+
+	if targetHost == nil {
+		response.Error = fmt.Errorf("host '%s' not found or not enabled", qm.TargetHost)
+		return response
+	}
+
+	// Execute the control action
+	result, err := d.executeControlAction(ctx, *targetHost, qm.TargetContainer, qm.ControlAction)
+	if err != nil {
+		d.logger.Error("Control action failed",
+			"action", qm.ControlAction,
+			"container", qm.TargetContainer,
+			"host", targetHost.Name,
+			"error", err,
+		)
+		response.Error = err
+		return response
+	}
+
+	d.logger.Info("Control action executed",
+		"action", qm.ControlAction,
+		"container", qm.TargetContainer,
+		"host", targetHost.Name,
+		"success", result.Success,
+	)
+
+	// Return result as DataFrame
+	frame := data.NewFrame("control_result",
+		data.NewField("success", nil, []bool{result.Success}),
+		data.NewField("action", nil, []string{result.Action}),
+		data.NewField("containerId", nil, []string{result.ContainerID}),
+		data.NewField("error", nil, []string{result.Error}),
+	)
+
+	frame.Meta = &data.FrameMeta{
+		Custom: map[string]interface{}{
+			"queryType": "control",
+		},
+	}
+
+	response.Frames = append(response.Frames, frame)
+	return response
+}
+
+// ControlActionResult represents the response from a control action
+type ControlActionResult struct {
+	Success     bool   `json:"success"`
+	Action      string `json:"action"`
+	ContainerID string `json:"containerId"`
+	Error       string `json:"error"`
+}
+
+// executeControlAction sends a control action request to the Docker agent
+func (d *Datasource) executeControlAction(ctx context.Context, host HostConfig, containerID, action string) (*ControlActionResult, error) {
+	targetURL := fmt.Sprintf("%s/api/containers/%s/%s",
+		strings.TrimSuffix(host.URL, "/"),
+		url.PathEscape(containerID),
+		action,
+	)
+
+	d.logger.Debug("Executing control action", "url", targetURL, "action", action)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", targetURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result ControlActionResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to decode response (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	if !result.Success {
+		return &result, fmt.Errorf("action failed: %s", result.Error)
+	}
+
+	return &result, nil
 }
 
 // Helper functions

@@ -1,11 +1,21 @@
 import { DataQuery } from '@grafana/data';
 
+// Container control actions
+export type ControlAction = 'start' | 'stop' | 'restart' | 'pause' | 'unpause';
+
+// All valid control actions
+export const ALL_CONTROL_ACTIONS: ControlAction[] = ['start', 'stop', 'restart', 'pause', 'unpause'];
+
 // Custom query type for Docker Metrics data source
 export interface DockerMetricsQuery extends DataQuery {
-  queryType: 'metrics' | 'containers';
+  queryType: 'metrics' | 'containers' | 'control';
   metrics?: string[];
   containerIds?: string[];
   containerNamePattern?: string;
+  // Control action fields
+  controlAction?: ControlAction;
+  targetContainer?: string;
+  targetHost?: string;
 }
 
 // Container state enum - matches C# ContainerState
@@ -69,6 +79,10 @@ export interface SimpleOptions {
   metricsPerRow: number;
   refreshInterval: number; // Refresh interval in seconds
   stripMode: boolean;      // Strip mode - hide host headers, show all containers in a single grid
+  // Container control options
+  enableControls: boolean;
+  allowedActions: ControlAction[];
+  confirmDangerousActions: boolean;
 }
 
 // Container info for listing
