@@ -398,9 +398,11 @@ interface SparklineProps {
   color: string;
   height?: number;
   formatValue: (v: number) => string;
+  fixedMin?: number;
+  fixedMax?: number;
 }
 
-const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatValue }) => {
+const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatValue, fixedMin, fixedMax }) => {
   if (data.length < 2) {
     return null;
   }
@@ -408,8 +410,8 @@ const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatV
   const padding = 2;
   const chartHeight = height - padding * 2;
 
-  const min = Math.min(...data);
-  const max = Math.max(...data);
+  const min = fixedMin ?? Math.min(...data);
+  const max = fixedMax ?? Math.max(...data);
   const range = max - min || 1;
 
   const points = data
@@ -458,6 +460,115 @@ const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatV
     </div>
   );
 };
+
+// DualSparkline for combined bidirectional metrics (e.g., Net RX/TX)
+interface DualSparklineProps {
+  upperData: number[];     // TX (upload) - shown above center
+  lowerData: number[];     // RX (download) - shown below center
+  upperColor: string;      // TX color
+  lowerColor: string;      // RX color
+  height?: number;
+  formatValue: (v: number) => string;
+}
+
+const DualSparkline: React.FC<DualSparklineProps> = ({
+  upperData,
+  lowerData,
+  upperColor,
+  lowerColor,
+  height = 40,
+  formatValue,
+}) => {
+  // Need at least 2 points for either dataset
+  if (upperData.length < 2 && lowerData.length < 2) {
+    return null;
+  }
+
+  const padding = 2;
+  const chartHeight = height - padding * 2;
+  const centerY = padding + chartHeight / 2;
+
+  // Calculate symmetric scale using max of both datasets
+  const maxUpper = upperData.length > 0 ? Math.max(...upperData) : 0;
+  const maxLower = lowerData.length > 0 ? Math.max(...lowerData) : 0;
+  const maxScale = Math.max(maxUpper, maxLower) || 1;
+
+  // Generate points for upper data (TX) - above center line
+  const upperPoints = upperData
+    .map((value, index) => {
+      const x = (index / (upperData.length - 1)) * 100;
+      const y = centerY - (value / maxScale) * (chartHeight / 2);
+      return `${x},${y}`;
+    })
+    .join(' ');
+
+  // Generate points for lower data (RX) - below center line (visually inverted)
+  const lowerPoints = lowerData
+    .map((value, index) => {
+      const x = (index / (lowerData.length - 1)) * 100;
+      const y = centerY + (value / maxScale) * (chartHeight / 2);
+      return `${x},${y}`;
+    })
+    .join(' ');
+
+  const scaleMaxLabel = formatValue(maxScale);
+
+  return (
+    <div style={{ position: 'relative', height, display: 'flex' }}>
+      <div style={{ flex: 1, position: 'relative', minWidth: 0 }}>
+        <svg
+          width="100%"
+          height={height}
+          viewBox={`0 0 100 ${height}`}
+          preserveAspectRatio="none"
+          style={{ display: 'block' }}
+        >
+          {/* Top line (max TX) */}
+          <line x1="0" y1={padding} x2="100" y2={padding} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
+          {/* Center line (0) */}
+          <line x1="0" y1={centerY} x2="100" y2={centerY} stroke="rgba(255,255,255,0.15)" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
+          {/* Bottom line (max RX) */}
+          <line x1="0" y1={padding + chartHeight} x2="100" y2={padding + chartHeight} stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" vectorEffect="non-scaling-stroke" />
+          {/* TX line (upper, above center) */}
+          {upperData.length > 1 && (
+            <polyline fill="none" stroke={upperColor} strokeWidth="1.5" points={upperPoints} vectorEffect="non-scaling-stroke" />
+          )}
+          {/* RX line (lower, below center) */}
+          {lowerData.length > 1 && (
+            <polyline fill="none" stroke={lowerColor} strokeWidth="1.5" points={lowerPoints} vectorEffect="non-scaling-stroke" />
+          )}
+        </svg>
+      </div>
+      <div
+        style={{
+          width: '32px',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          fontSize: '8px',
+          color: '#666',
+          textAlign: 'right',
+          paddingLeft: '4px',
+          flexShrink: 0,
+        }}
+      >
+        <span style={{ color: upperColor }}>+{scaleMaxLabel}</span>
+        <span>0</span>
+        <span style={{ color: lowerColor }}>-{scaleMaxLabel}</span>
+      </div>
+    </div>
+  );
+};
+
+// Helper to calculate memory limit from memoryBytes and memoryPercent
+function getMemoryLimit(metrics: ContainerMetrics[]): number | null {
+  for (const m of metrics) {
+    if (m.memoryBytes > 0 && m.memoryPercent > 0) {
+      return m.memoryBytes / (m.memoryPercent / 100);
+    }
+  }
+  return null;
+}
 
 interface ContainerWithMetrics {
   containerId: string;
@@ -515,6 +626,17 @@ function detectMetricsFromData(presentMetricsMap: Map<string, Set<string>>): Met
 
   if (allPresent.size === 0) {
     return AVAILABLE_METRICS;
+  }
+
+  // Check if both network metrics are present - if so, add combined and remove individuals
+  const hasNetRx = allPresent.has('networkRxBytes');
+  const hasNetTx = allPresent.has('networkTxBytes');
+  const useCombinedNetwork = hasNetRx && hasNetTx;
+
+  if (useCombinedNetwork) {
+    allPresent.add('networkCombined');
+    allPresent.delete('networkRxBytes');
+    allPresent.delete('networkTxBytes');
   }
 
   return AVAILABLE_METRICS.filter(m => allPresent.has(m.key));
@@ -719,6 +841,52 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
   }, [containersByHost]);
 
   const renderMetric = (container: ContainerWithMetrics, metricDef: MetricDefinition) => {
+    // Handle combined network metric
+    if (metricDef.isCombined && metricDef.combineKeys) {
+      // For networkCombined, check if either underlying metric is present
+      const hasAnyKey = metricDef.combineKeys.some(key => container.presentMetrics.has(key));
+      if (!hasAnyKey) {
+        return null;
+      }
+
+      // Get rate data for both TX and RX
+      const txRateData = container.rateData.get('networkTxBytes') || [];
+      const rxRateData = container.rateData.get('networkRxBytes') || [];
+      const txLatest = container.latestRates.get('networkTxBytes');
+      const rxLatest = container.latestRates.get('networkRxBytes');
+
+      if (txRateData.length === 0 && rxRateData.length === 0) {
+        return null;
+      }
+
+      const txDisplay = txLatest !== undefined ? txLatest : 0;
+      const rxDisplay = rxLatest !== undefined ? rxLatest : 0;
+
+      return (
+        <div key={metricDef.key} className={styles.metric}>
+          <div className={styles.metricHeader}>
+            <span className={styles.metricColorDot} style={{ background: metricDef.color }} />
+            <span className={styles.metricLabel}>{metricDef.label}</span>
+          </div>
+          <div className={styles.metricValue}>
+            <span style={{ color: metricDef.color }}>{txDisplay.toFixed(1)}</span>
+            <span style={{ color: '#888' }}>/</span>
+            <span style={{ color: metricDef.secondaryColor }}>{rxDisplay.toFixed(1)}</span>
+            <span className={styles.metricUnit}>{metricDef.unit}</span>
+          </div>
+          {(txRateData.length > 1 || rxRateData.length > 1) && (
+            <DualSparkline
+              upperData={txRateData}
+              lowerData={rxRateData}
+              upperColor={metricDef.color}
+              lowerColor={metricDef.secondaryColor || '#FF9830'}
+              formatValue={(v) => v.toFixed(1)}
+            />
+          )}
+        </div>
+      );
+    }
+
     // Check if this container actually has this metric in the query results
     if (!container.presentMetrics.has(metricDef.key)) {
       return null;
@@ -747,7 +915,13 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
             <span className={styles.metricUnit}>{metricDef.unit}</span>
           </div>
           {rateData.length > 1 && (
-            <Sparkline data={rateData} color={metricDef.color} formatValue={(v) => v.toFixed(1)} />
+            <Sparkline
+              data={rateData}
+              color={metricDef.color}
+              formatValue={(v) => v.toFixed(1)}
+              fixedMin={metricDef.fixedMin}
+              fixedMax={metricDef.fixedMax}
+            />
           )}
         </div>
       );
@@ -763,6 +937,15 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
       .map((m) => metricDef.getValue(m))
       .filter((v): v is number => v !== null && v !== undefined);
 
+    // For memoryBytes, calculate memory limit for fixedMax
+    let effectiveFixedMax = metricDef.fixedMax;
+    if (metricDef.key === 'memoryBytes') {
+      const memLimit = getMemoryLimit(container.metrics);
+      if (memLimit !== null) {
+        effectiveFixedMax = memLimit;
+      }
+    }
+
     return (
       <div key={metricDef.key} className={styles.metric}>
         <div className={styles.metricHeader}>
@@ -773,7 +956,15 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
           {metricDef.format(rawValue)}
           <span className={styles.metricUnit}>{metricDef.unit}</span>
         </div>
-        {metricData.length > 1 && <Sparkline data={metricData} color={metricDef.color} formatValue={metricDef.format} />}
+        {metricData.length > 1 && (
+          <Sparkline
+            data={metricData}
+            color={metricDef.color}
+            formatValue={metricDef.format}
+            fixedMin={metricDef.fixedMin}
+            fixedMax={effectiveFixedMax}
+          />
+        )}
       </div>
     );
   };
