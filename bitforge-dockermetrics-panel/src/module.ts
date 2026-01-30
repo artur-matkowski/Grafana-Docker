@@ -1,6 +1,7 @@
 import { PanelPlugin } from '@grafana/data';
 import { SimpleOptions, ALL_CONTROL_ACTIONS } from './types';
 import { SimplePanel } from './components/SimplePanel';
+import { VersionInfoEditor } from './components/VersionInfoEditor';
 
 export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOptions((builder) => {
   return builder
@@ -78,5 +79,12 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       defaultValue: true,
       category: ['Controls'],
       showIf: (config) => config.enableControls === true,
+    })
+    .addCustomEditor({
+      id: 'versionInfo',
+      path: '__versionInfo',
+      name: '',
+      category: ['About'],
+      editor: VersionInfoEditor,
     });
 });

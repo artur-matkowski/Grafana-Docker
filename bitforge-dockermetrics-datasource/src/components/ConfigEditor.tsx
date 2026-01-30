@@ -3,6 +3,7 @@ import { DataSourcePluginOptionsEditorProps, SelectableValue } from '@grafana/da
 import { InlineField, Input, Button, VerticalGroup, HorizontalGroup, Switch, IconButton, MultiSelect, Alert } from '@grafana/ui';
 import { DockerMetricsDataSourceOptions, HostConfig, ControlAction, ALL_CONTROL_ACTIONS } from '../types';
 import { css } from '@emotion/css';
+import { VersionInfo } from './VersionInfo';
 
 interface Props extends DataSourcePluginOptionsEditorProps<DockerMetricsDataSourceOptions> {}
 
@@ -123,6 +124,7 @@ export function ConfigEditor(props: Props) {
 
   return (
     <VerticalGroup spacing="md">
+      <VersionInfo />
       <h4>Docker Metrics Collector Agents</h4>
       <p style={{ color: '#888', fontSize: '12px', marginBottom: '16px' }}>
         Configure the Docker Metrics Collector agents running on your Docker hosts.

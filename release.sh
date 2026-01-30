@@ -88,6 +88,11 @@ update_versions() {
     echo "// This file is auto-updated by release.sh" > "$panel_version_file"
     echo "export const PLUGIN_VERSION = '${version}';" >> "$panel_version_file"
 
+    # Update datasource version.ts
+    local ds_version_file="${SCRIPT_DIR}/bitforge-dockermetrics-datasource/src/version.ts"
+    echo "// This file is auto-updated by release.sh" > "$ds_version_file"
+    echo "export const PLUGIN_VERSION = '${version}';" >> "$ds_version_file"
+
     # Update datasource package.json
     local ds_pkg="${SCRIPT_DIR}/bitforge-dockermetrics-datasource/package.json"
     sed -i 's/"version": "[^"]*"/"version": "'"${version}"'"/' "$ds_pkg"
