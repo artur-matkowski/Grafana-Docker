@@ -802,24 +802,8 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
       const containerKey = `${m.hostName}:${m.containerName}`;
       let container = byContainer.get(containerKey);
       if (!container) {
-        // Container not in containers list but has metrics - add it
-        container = {
-          containerId: m.containerId,
-          containerName: m.containerName,
-          hostId: m.hostName,
-          hostName: m.hostName,
-          state: 'undefined' as ContainerState,
-          healthStatus: 'none' as ContainerHealthStatus,
-          isRunning: false,
-          isPaused: false,
-          isUnhealthy: false,
-          metrics: [],
-          latest: null,
-          rateData: new Map(),
-          latestRates: new Map(),
-          presentMetrics: presentMetricsMap.get(containerKey) || new Set(),
-        };
-        byContainer.set(containerKey, container);
+        // Container not in containers list - skip orphan metrics
+        continue;
       }
       container.metrics.push(m);
     }

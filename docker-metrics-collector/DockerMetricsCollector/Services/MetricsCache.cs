@@ -145,6 +145,28 @@ public class MetricsCache
     }
 
     /// <summary>
+    /// Remove metrics for containers that no longer exist.
+    /// </summary>
+    public void PurgeStaleContainers(IEnumerable<string> activeContainerIds)
+    {
+        var activeSet = activeContainerIds.ToHashSet();
+        var staleKeys = _metrics.Keys.Where(k => !activeSet.Contains(k)).ToList();
+
+        foreach (var key in staleKeys)
+        {
+            if (_metrics.TryRemove(key, out _))
+            {
+                _logger.LogDebug("Purged metrics for removed container {ContainerId}", key);
+            }
+        }
+
+        if (staleKeys.Count > 0)
+        {
+            _logger.LogInformation("Purged metrics for {Count} removed container(s)", staleKeys.Count);
+        }
+    }
+
+    /// <summary>
     /// Remove old metrics beyond retention period.
     /// </summary>
     public void Trim()
