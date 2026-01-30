@@ -68,6 +68,7 @@ function parseContainersFromDataFrame(frame: DataFrame): ContainerInfo[] {
   const isRunningField = frame.fields.find((f) => f.name === 'isRunning');
   const isPausedField = frame.fields.find((f) => f.name === 'isPaused');
   const isUnhealthyField = frame.fields.find((f) => f.name === 'isUnhealthy');
+  const agentVersionField = frame.fields.find((f) => f.name === 'agentVersion');
 
   if (!containerIdField || !containerNameField) {
     return [];
@@ -88,6 +89,7 @@ function parseContainersFromDataFrame(frame: DataFrame): ContainerInfo[] {
       isRunning: (isRunningField?.values[i] as boolean) ?? isStateRunning(state),
       isPaused: (isPausedField?.values[i] as boolean) ?? isStatePaused(state),
       isUnhealthy: (isUnhealthyField?.values[i] as boolean) ?? isHealthUnhealthy(healthStatus),
+      agentVersion: (agentVersionField?.values[i] as string) || undefined,
     });
   }
 
@@ -289,6 +291,12 @@ const getStyles = () => {
       color: #888;
       font-weight: normal;
       margin-left: auto;
+    `,
+    agentVersion: css`
+      font-size: 10px;
+      color: #888;
+      font-weight: normal;
+      margin-left: 4px;
     `,
     containersGrid: css`
       display: grid;
@@ -833,13 +841,16 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
     }
 
     // Group by host
-    const byHost = new Map<string, { hostId: string; hostName: string; containers: ContainerWithMetrics[] }>();
+    const byHost = new Map<string, { hostId: string; hostName: string; agentVersion?: string; containers: ContainerWithMetrics[] }>();
     for (const container of byContainer.values()) {
       const hostKey = container.hostId;
       if (!byHost.has(hostKey)) {
+        // Get agentVersion from the first container info for this host
+        const containerInfo = containers.find(c => c.hostId === container.hostId);
         byHost.set(hostKey, {
           hostId: container.hostId,
           hostName: container.hostName,
+          agentVersion: containerInfo?.agentVersion,
           containers: [],
         });
       }
@@ -1129,6 +1140,9 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
           <div className={styles.hostHeader}>
             <span className={styles.hostHealthDot} style={{ background: '#73BF69' }} />
             {host.hostName}
+            {host.agentVersion && (
+              <span className={styles.agentVersion}>v{host.agentVersion}</span>
+            )}
             <span className={styles.containerCount}>
               {host.containers.length} container{host.containers.length !== 1 ? 's' : ''}
             </span>

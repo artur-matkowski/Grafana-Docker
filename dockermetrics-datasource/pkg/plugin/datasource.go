@@ -469,11 +469,24 @@ func (d *Datasource) buildContainersFrameFiltered(ctx context.Context, hosts []H
 	isRunningList := make([]bool, 0)
 	isPausedList := make([]bool, 0)
 	isUnhealthyList := make([]bool, 0)
+	agentVersions := make([]string, 0)
 
 	for _, host := range hosts {
 		hostSel, ok := hostSelections[host.ID]
 		if !ok {
 			continue
+		}
+
+		// Fetch agent info to get version
+		agentVersion := ""
+		agentInfo, err := d.fetchAgentInfoFromHost(ctx, host)
+		if err != nil {
+			d.logger.Warn("Failed to fetch agent info",
+				"host", host.Name,
+				"error", err,
+			)
+		} else {
+			agentVersion = agentInfo.AgentVersion
 		}
 
 		containers, err := d.fetchContainersFromHost(ctx, host)
@@ -508,6 +521,7 @@ func (d *Datasource) buildContainersFrameFiltered(ctx context.Context, hosts []H
 				isRunningList = append(isRunningList, c.IsRunning)
 				isPausedList = append(isPausedList, c.IsPaused)
 				isUnhealthyList = append(isUnhealthyList, c.IsUnhealthy)
+				agentVersions = append(agentVersions, agentVersion)
 			}
 		}
 	}
@@ -526,6 +540,7 @@ func (d *Datasource) buildContainersFrameFiltered(ctx context.Context, hosts []H
 		data.NewField("isRunning", nil, isRunningList),
 		data.NewField("isPaused", nil, isPausedList),
 		data.NewField("isUnhealthy", nil, isUnhealthyList),
+		data.NewField("agentVersion", nil, agentVersions),
 	)
 
 	frame.Meta = &data.FrameMeta{
@@ -548,8 +563,21 @@ func (d *Datasource) buildContainersFrame(ctx context.Context, hosts []HostConfi
 	isRunningList := make([]bool, 0)
 	isPausedList := make([]bool, 0)
 	isUnhealthyList := make([]bool, 0)
+	agentVersions := make([]string, 0)
 
 	for _, host := range hosts {
+		// Fetch agent info to get version
+		agentVersion := ""
+		agentInfo, err := d.fetchAgentInfoFromHost(ctx, host)
+		if err != nil {
+			d.logger.Warn("Failed to fetch agent info",
+				"host", host.Name,
+				"error", err,
+			)
+		} else {
+			agentVersion = agentInfo.AgentVersion
+		}
+
 		containers, err := d.fetchContainersFromHost(ctx, host)
 		if err != nil {
 			d.logger.Warn("Failed to fetch containers for metrics response",
@@ -569,6 +597,7 @@ func (d *Datasource) buildContainersFrame(ctx context.Context, hosts []HostConfi
 			isRunningList = append(isRunningList, c.IsRunning)
 			isPausedList = append(isPausedList, c.IsPaused)
 			isUnhealthyList = append(isUnhealthyList, c.IsUnhealthy)
+			agentVersions = append(agentVersions, agentVersion)
 		}
 	}
 
@@ -586,6 +615,7 @@ func (d *Datasource) buildContainersFrame(ctx context.Context, hosts []HostConfi
 		data.NewField("isRunning", nil, isRunningList),
 		data.NewField("isPaused", nil, isPausedList),
 		data.NewField("isUnhealthy", nil, isUnhealthyList),
+		data.NewField("agentVersion", nil, agentVersions),
 	)
 
 	// Mark this frame with custom metadata so panel can identify it
@@ -890,6 +920,14 @@ type ContainerInfo struct {
 	IsUnhealthy   bool   `json:"isUnhealthy"`
 }
 
+// AgentInfo represents information returned from /api/info endpoint
+type AgentInfo struct {
+	AgentVersion    string `json:"agentVersion"`
+	DockerVersion   string `json:"dockerVersion"`
+	DockerConnected bool   `json:"dockerConnected"`
+	PsiSupported    bool   `json:"psiSupported"`
+}
+
 // queryContainers returns a list of containers for variable queries
 func (d *Datasource) queryContainers(ctx context.Context, qm QueryModel) backend.DataResponse {
 	var response backend.DataResponse
@@ -983,6 +1021,33 @@ func (d *Datasource) fetchContainersFromHost(ctx context.Context, host HostConfi
 	}
 
 	return containers, nil
+}
+
+// fetchAgentInfoFromHost gets agent info from a Docker agent's /api/info endpoint
+func (d *Datasource) fetchAgentInfoFromHost(ctx context.Context, host HostConfig) (*AgentInfo, error) {
+	targetURL := fmt.Sprintf("%s/api/info", strings.TrimSuffix(host.URL, "/"))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	var info AgentInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, err
+	}
+
+	return &info, nil
 }
 
 // getEnabledHosts returns enabled hosts, optionally filtered by IDs
