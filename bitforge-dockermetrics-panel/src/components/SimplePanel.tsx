@@ -462,6 +462,14 @@ const Sparkline: React.FC<SparklineProps> = ({ data, color, height = 40, formatV
   );
 };
 
+// Format network speed with dynamic unit (KB/s or MB/s)
+function formatNetworkSpeed(kbPerSec: number): { value: string; unit: string } {
+  if (kbPerSec >= 1024) {
+    return { value: (kbPerSec / 1024).toFixed(1), unit: 'MB/s' };
+  }
+  return { value: kbPerSec.toFixed(1), unit: 'KB/s' };
+}
+
 // Format bytes/s in compact resistor-style notation (e.g., 1k1 = 1.1 KB/s, 2m5 = 2.5 MB/s)
 function formatBytesCompact(kbps: number): string {
   if (kbps < 1) {
@@ -874,6 +882,10 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
       const txDisplay = txLatest !== undefined ? txLatest : 0;
       const rxDisplay = rxLatest !== undefined ? rxLatest : 0;
 
+      // Format TX and RX with dynamic units
+      const txFormatted = formatNetworkSpeed(txDisplay);
+      const rxFormatted = formatNetworkSpeed(rxDisplay);
+
       return (
         <div key={metricDef.key} className={styles.metric}>
           <div className={styles.metricHeader}>
@@ -881,10 +893,11 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
             <span className={styles.metricLabel}>{metricDef.label}</span>
           </div>
           <div className={styles.metricValue}>
-            <span style={{ color: metricDef.color }}>{txDisplay.toFixed(1)}</span>
+            <span style={{ color: metricDef.color }}>{txFormatted.value}</span>
+            <span className={styles.metricUnit} style={{ marginRight: '2px' }}>{txFormatted.unit}</span>
             <span style={{ color: '#888' }}>/</span>
-            <span style={{ color: metricDef.secondaryColor }}>{rxDisplay.toFixed(1)}</span>
-            <span className={styles.metricUnit}>{metricDef.unit}</span>
+            <span style={{ color: metricDef.secondaryColor }}>{rxFormatted.value}</span>
+            <span className={styles.metricUnit}>{rxFormatted.unit}</span>
           </div>
           {(txRateData.length > 1 || rxRateData.length > 1) && (
             <DualSparkline
@@ -915,6 +928,10 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
 
       const displayValue = latestRate !== undefined ? latestRate : 0;
 
+      // Use dynamic unit formatting for network metrics
+      const isNetworkMetric = metricDef.key === 'networkRxBytes' || metricDef.key === 'networkTxBytes';
+      const formatted = isNetworkMetric ? formatNetworkSpeed(displayValue) : null;
+
       return (
         <div key={metricDef.key} className={styles.metric}>
           <div className={styles.metricHeader}>
@@ -922,8 +939,8 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
             <span className={styles.metricLabel}>{metricDef.label}</span>
           </div>
           <div className={styles.metricValue}>
-            {displayValue.toFixed(1)}
-            <span className={styles.metricUnit}>{metricDef.unit}</span>
+            {formatted ? formatted.value : displayValue.toFixed(1)}
+            <span className={styles.metricUnit}>{formatted ? formatted.unit : metricDef.unit}</span>
           </div>
           {rateData.length > 1 && (
             <Sparkline
