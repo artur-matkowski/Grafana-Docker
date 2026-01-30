@@ -37,6 +37,9 @@ export interface DockerMetricsQuery extends DataQuery {
   // New matrix-based selection
   hostSelections?: Record<string, HostSelection>;
 
+  // Global default metrics for new containers
+  defaultContainerMetrics?: string[];
+
   // Legacy fields (kept for backward compatibility)
   metrics?: string[];
   containerNamePattern?: string;
@@ -93,4 +96,5 @@ export const DEFAULT_METRICS = ['cpuPercent', 'memoryBytes'];
  */
 export const DEFAULT_QUERY: Partial<DockerMetricsQuery> = {
   metrics: DEFAULT_METRICS,
+  defaultContainerMetrics: DEFAULT_METRICS,
 };

@@ -10,6 +10,7 @@ import {
   HostSelection,
   HostSelectionMode,
   ALL_METRICS,
+  DEFAULT_METRICS,
 } from '../types';
 
 type Props = QueryEditorProps<DockerMetricsDataSource, DockerMetricsQuery, DockerMetricsDataSourceOptions>;
@@ -194,6 +195,62 @@ const getStyles = () => ({
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     width: 50px;
   `,
+  defaultMetricsSection: css`
+    margin-bottom: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+  `,
+  defaultMetricsHeader: css`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(80, 150, 80, 0.15);
+    cursor: pointer;
+    &:hover {
+      background: rgba(80, 150, 80, 0.25);
+    }
+  `,
+  defaultMetricsTitle: css`
+    font-weight: 600;
+    flex: 1;
+  `,
+  defaultMetricsSummary: css`
+    color: #8e8e8e;
+    font-size: 12px;
+  `,
+  defaultMetricsContent: css`
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.1);
+  `,
+  defaultMetricsActions: css`
+    display: flex;
+    gap: 12px;
+    margin-bottom: 8px;
+    font-size: 11px;
+  `,
+  defaultMetricsGrid: css`
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  `,
+  metricChip: css`
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    font-size: 12px;
+    &:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+  `,
+  expandIcon: css`
+    font-size: 10px;
+    color: #8e8e8e;
+  `,
 });
 
 export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) {
@@ -201,6 +258,7 @@ export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) 
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [defaultMetricsExpanded, setDefaultMetricsExpanded] = useState(false);
 
   // Fetch containers from backend
   useEffect(() => {
@@ -319,6 +377,8 @@ export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) 
     const host = containersByHost.find(h => h.hostId === hostId);
     if (!host) {return;}
 
+    const defaultMetrics = query.defaultContainerMetrics ?? DEFAULT_METRICS;
+
     if (mode === 'blacklist') {
       // Switching to blacklist: clear container selections, keep all metrics
       updateHostSelection(hostId, {
@@ -328,10 +388,10 @@ export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) 
         metrics: [...ALL_METRICS],
       });
     } else {
-      // Switching to whitelist: select all containers with all metrics
+      // Switching to whitelist: select all containers with default metrics
       const containerMetrics: Record<string, string[]> = {};
       for (const c of host.containers) {
-        containerMetrics[c.containerId] = [...ALL_METRICS];
+        containerMetrics[c.containerId] = [...defaultMetrics];
       }
       updateHostSelection(hostId, {
         mode: 'whitelist',
@@ -340,11 +400,12 @@ export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) 
         metrics: [],
       });
     }
-  }, [containersByHost, updateHostSelection]);
+  }, [containersByHost, updateHostSelection, query.defaultContainerMetrics]);
 
   // Toggle container inclusion
   const onContainerToggle = useCallback((hostId: string, containerId: string, checked: boolean) => {
     const hostSel = getHostSelection(hostId);
+    const defaultMetrics = query.defaultContainerMetrics ?? DEFAULT_METRICS;
 
     if (hostSel.mode === 'whitelist') {
       // Whitelist: checked = include
@@ -354,7 +415,7 @@ export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) 
 
       const newContainerMetrics = { ...hostSel.containerMetrics };
       if (checked) {
-        newContainerMetrics[containerId] = [...ALL_METRICS];
+        newContainerMetrics[containerId] = [...defaultMetrics];
       } else {
         delete newContainerMetrics[containerId];
       }
@@ -371,7 +432,7 @@ export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) 
 
       updateHostSelection(hostId, { containerIds: newContainerIds });
     }
-  }, [getHostSelection, updateHostSelection]);
+  }, [getHostSelection, updateHostSelection, query.defaultContainerMetrics]);
 
   // Toggle metric for a container (works in both modes)
   const onMetricToggle = useCallback((hostId: string, containerId: string, metric: string, checked: boolean) => {
@@ -399,11 +460,12 @@ export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) 
     if (!host) {return;}
 
     const hostSel = getHostSelection(hostId);
+    const defaultMetrics = query.defaultContainerMetrics ?? DEFAULT_METRICS;
 
     if (hostSel.mode === 'whitelist') {
       const containerMetrics: Record<string, string[]> = {};
       for (const c of host.containers) {
-        containerMetrics[c.containerId] = [...ALL_METRICS];
+        containerMetrics[c.containerId] = [...defaultMetrics];
       }
       updateHostSelection(hostId, {
         containerIds: host.containers.map(c => c.containerId),
@@ -413,7 +475,7 @@ export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) 
       // Blacklist: clear exclusions
       updateHostSelection(hostId, { containerIds: [] });
     }
-  }, [containersByHost, getHostSelection, updateHostSelection]);
+  }, [containersByHost, getHostSelection, updateHostSelection, query.defaultContainerMetrics]);
 
   // Clear all containers for host
   const onClearAllContainers = useCallback((hostId: string) => {
@@ -539,6 +601,29 @@ export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) 
     onRunQuery();
   }, [query, onChange, onRunQuery, containersByHost, getHostSelection]);
 
+  // Get default container metrics (fallback to DEFAULT_METRICS)
+  const getDefaultContainerMetrics = useCallback((): string[] => {
+    return query.defaultContainerMetrics ?? DEFAULT_METRICS;
+  }, [query.defaultContainerMetrics]);
+
+  // Toggle single metric in default metrics
+  const onDefaultMetricsChange = useCallback((metric: string, checked: boolean) => {
+    const current = getDefaultContainerMetrics();
+    const newMetrics = checked
+      ? [...current, metric]
+      : current.filter(m => m !== metric);
+    onChange({ ...query, defaultContainerMetrics: newMetrics });
+  }, [query, onChange, getDefaultContainerMetrics]);
+
+  // Select all or clear all default metrics
+  const onToggleAllDefaultMetrics = useCallback((selectAll: boolean) => {
+    const newMetrics = selectAll ? [...ALL_METRICS] : [];
+    onChange({ ...query, defaultContainerMetrics: newMetrics });
+  }, [query, onChange]);
+
+  // Computed default metrics for rendering
+  const defaultContainerMetrics = getDefaultContainerMetrics();
+
   if (loading) {
     return (
       <div className={styles.loading}>
@@ -567,10 +652,46 @@ export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) 
 
   return (
     <div className={styles.container}>
+      {/* Default Metrics Section */}
+      <div className={styles.defaultMetricsSection}>
+        <div
+          className={styles.defaultMetricsHeader}
+          onClick={() => setDefaultMetricsExpanded(!defaultMetricsExpanded)}
+        >
+          <span className={styles.expandIcon}>{defaultMetricsExpanded ? '▼' : '▶'}</span>
+          <span className={styles.defaultMetricsTitle}>Default Metrics for New Containers</span>
+          <span className={styles.defaultMetricsSummary}>
+            {defaultContainerMetrics.length} of {ALL_METRICS.length} metrics
+          </span>
+        </div>
+        {defaultMetricsExpanded && (
+          <div className={styles.defaultMetricsContent}>
+            <div className={styles.defaultMetricsActions}>
+              <span className={styles.quickAction} onClick={() => onToggleAllDefaultMetrics(true)}>
+                Select All
+              </span>
+              <span className={styles.quickAction} onClick={() => onToggleAllDefaultMetrics(false)}>
+                Clear All
+              </span>
+            </div>
+            <div className={styles.defaultMetricsGrid}>
+              {ALL_METRICS.map((metric) => (
+                <label key={metric} className={styles.metricChip}>
+                  <Checkbox
+                    value={defaultContainerMetrics.includes(metric)}
+                    onChange={(e) => onDefaultMetricsChange(metric, e.currentTarget.checked)}
+                  />
+                  {METRIC_CONFIG[metric]?.shortLabel || metric}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
       {containersByHost.map((host) => {
         const hostSel = getHostSelection(host.hostId);
         const summary = getSelectionSummary(host.hostId);
-        const selectedMetrics = hostSel.metrics || [];
 
         return (
           <div key={host.hostId} className={styles.hostSection}>
@@ -625,9 +746,9 @@ export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) 
                     const isExcluded = hostSel.mode === 'blacklist'
                       ? hostSel.containerIds.includes(container.containerId)
                       : !hostSel.containerIds.includes(container.containerId);
-                    // For blacklist mode, use containerMetrics if set, otherwise default to all metrics
+                    // For blacklist mode, use containerMetrics if set, otherwise default to defaultContainerMetrics
                     const containerMetrics = hostSel.containerMetrics[container.containerId]
-                      ?? (hostSel.mode === 'blacklist' ? [...ALL_METRICS] : []);
+                      ?? (hostSel.mode === 'blacklist' ? [...defaultContainerMetrics] : []);
 
                     return (
                       <tr key={container.containerId} className={`${styles.row} ${isExcluded ? styles.rowExcluded : ''}`}>
