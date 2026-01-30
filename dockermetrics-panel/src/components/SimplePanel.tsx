@@ -772,13 +772,13 @@ export const SimplePanel: React.FC<Props> = ({ width, height, options, data }) =
   }, [presentMetricsMap]);
 
   // Group by container and host - NO filtering, display everything from query
-  // Uses hostId:containerName as key for stability across container recreates
+  // Uses hostName:containerName as key to match metrics frame labels
   const containersByHost = useMemo(() => {
     const byContainer = new Map<string, ContainerWithMetrics>();
 
     // Add all containers from the containers query result
     for (const c of containers) {
-      const containerKey = `${c.hostId}:${c.containerName}`;
+      const containerKey = `${c.hostName}:${c.containerName}`;
       byContainer.set(containerKey, {
         containerId: c.containerId,
         containerName: c.containerName,
