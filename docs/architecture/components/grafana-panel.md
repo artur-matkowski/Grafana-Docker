@@ -79,15 +79,14 @@ The Bitforge Docker Metrics Panel is a React-based Grafana panel plugin that vis
 
 ```typescript
 interface SimpleOptions {
-  hosts: HostConfig[];           // Agent configurations
-  selectedContainerIds: string[];// Container filter
-  containerFilterMode: 'all' | 'whitelist' | 'blacklist';
-  refreshInterval: number;       // 1-300 seconds
-  containersPerRow: number;      // Layout control
-  metricsPerRow: number;
-  selectedMetrics: string[];     // Which metrics to show
-  showControls: boolean;         // Enable action buttons
+  containersPerRow: number;      // Layout control (0 = auto)
+  metricsPerRow: number;         // Layout control (0 = auto)
+  stripMode: boolean;            // Hide host headers, single grid layout
+  enableControls: boolean;       // Enable action buttons
+  allowedActions: ControlAction[];  // Which actions to show
+  confirmDangerousActions: boolean; // Confirm stop/restart
 }
+// Note: Data refresh is handled by Grafana's dashboard-level refresh interval
 
 interface ContainerMetrics {
   id: string;

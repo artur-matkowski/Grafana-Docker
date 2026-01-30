@@ -74,10 +74,10 @@ export function getStateDisplay(state: ContainerState): { label: string; color: 
 }
 
 // Panel options - layout only (filtering moved to data source query)
+// Note: Data refresh is handled by Grafana's dashboard-level refresh interval
 export interface SimpleOptions {
   containersPerRow: number;
   metricsPerRow: number;
-  refreshInterval: number; // Refresh interval in seconds
   stripMode: boolean;      // Strip mode - hide host headers, show all containers in a single grid
   // Container control options
   enableControls: boolean;

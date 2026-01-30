@@ -36,18 +36,6 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
         integer: true,
       },
     })
-    .addNumberInput({
-      path: 'refreshInterval',
-      name: 'Refresh Interval',
-      description: 'How often to fetch new metrics (in seconds)',
-      defaultValue: 10,
-      category: ['Data'],
-      settings: {
-        min: 1,
-        max: 300,
-        integer: true,
-      },
-    })
     .addBooleanSwitch({
       path: 'enableControls',
       name: 'Enable Container Controls',
