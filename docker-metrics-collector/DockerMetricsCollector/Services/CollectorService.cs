@@ -93,5 +93,9 @@ public class CollectorService : BackgroundService
 
         _logger.LogDebug("Collected metrics for {Count}/{Total} containers",
             collectedCount, containers.Count);
+
+        // Purge metrics for containers that no longer exist
+        var activeContainerIds = containers.Select(c => c.ContainerId).ToList();
+        _cache.PurgeStaleContainers(activeContainerIds);
     }
 }
