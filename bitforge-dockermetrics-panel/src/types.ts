@@ -97,6 +97,8 @@ export interface ContainerInfo {
   isRunning: boolean;
   isPaused: boolean;
   isUnhealthy: boolean;
+  // Agent version from the host running this container
+  agentVersion?: string;
 }
 
 // PSI metrics
