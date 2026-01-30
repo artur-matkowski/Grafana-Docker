@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import { QueryEditorProps } from '@grafana/data';
-import { RadioButtonGroup, Checkbox, useStyles2, Spinner } from '@grafana/ui';
+import { RadioButtonGroup, Checkbox, useStyles2, Spinner, Dropdown, Menu, IconButton } from '@grafana/ui';
 import { css } from '@emotion/css';
 import { getBackendSrv } from '@grafana/runtime';
 import { DockerMetricsDataSource } from '../datasource';
@@ -178,6 +178,21 @@ const getStyles = () => ({
     font-size: 11px;
     color: #6e9fff;
     font-style: italic;
+  `,
+  actionsHeaderCell: css`
+    padding: 6px 8px;
+    text-align: center;
+    font-weight: 500;
+    font-size: 10px;
+    color: #8e8e8e;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    width: 50px;
+  `,
+  actionsCell: css`
+    padding: 4px 8px;
+    text-align: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    width: 50px;
   `,
 });
 
@@ -470,6 +485,60 @@ export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) 
     return { containers: containerCount, total: host.containers.length, metrics: metricCount };
   }, [containersByHost, getHostSelection]);
 
+  // Apply metrics from source container to all containers on the same host
+  const onApplyToHost = useCallback((hostId: string, sourceContainerId: string) => {
+    const hostSel = getHostSelection(hostId);
+    const sourceMetrics = hostSel.containerMetrics[sourceContainerId]
+      ?? (hostSel.mode === 'blacklist' ? [...ALL_METRICS] : []);
+
+    const host = containersByHost.find(h => h.hostId === hostId);
+    if (!host) {return;}
+
+    const newContainerMetrics = { ...hostSel.containerMetrics };
+    for (const container of host.containers) {
+      // Skip excluded containers in blacklist mode, or non-included in whitelist
+      const isExcluded = hostSel.mode === 'blacklist'
+        ? hostSel.containerIds.includes(container.containerId)
+        : !hostSel.containerIds.includes(container.containerId);
+      if (!isExcluded) {
+        newContainerMetrics[container.containerId] = [...sourceMetrics];
+      }
+    }
+
+    updateHostSelection(hostId, { containerMetrics: newContainerMetrics });
+  }, [containersByHost, getHostSelection, updateHostSelection]);
+
+  // Apply metrics from source container to all containers across all hosts
+  const onApplyToCluster = useCallback((sourceHostId: string, sourceContainerId: string) => {
+    const sourceHostSel = getHostSelection(sourceHostId);
+    const sourceMetrics = sourceHostSel.containerMetrics[sourceContainerId]
+      ?? (sourceHostSel.mode === 'blacklist' ? [...ALL_METRICS] : []);
+
+    const newHostSelections = { ...query.hostSelections };
+
+    for (const host of containersByHost) {
+      const hostSel = getHostSelection(host.hostId);
+      const newContainerMetrics = { ...hostSel.containerMetrics };
+
+      for (const container of host.containers) {
+        const isExcluded = hostSel.mode === 'blacklist'
+          ? hostSel.containerIds.includes(container.containerId)
+          : !hostSel.containerIds.includes(container.containerId);
+        if (!isExcluded) {
+          newContainerMetrics[container.containerId] = [...sourceMetrics];
+        }
+      }
+
+      newHostSelections[host.hostId] = {
+        ...hostSel,
+        containerMetrics: newContainerMetrics,
+      };
+    }
+
+    onChange({ ...query, hostSelections: newHostSelections });
+    onRunQuery();
+  }, [query, onChange, onRunQuery, containersByHost, getHostSelection]);
+
   if (loading) {
     return (
       <div className={styles.loading}>
@@ -547,6 +616,7 @@ export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) 
                         {METRIC_CONFIG[metric]?.shortLabel || metric}
                       </th>
                     ))}
+                    <th className={styles.actionsHeaderCell}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -584,6 +654,24 @@ export function QueryEditor({ query, onChange, onRunQuery, datasource }: Props) 
                             />
                           </td>
                         ))}
+                        <td className={styles.actionsCell}>
+                          <Dropdown
+                            overlay={
+                              <Menu>
+                                <Menu.Item
+                                  label="Apply to Host"
+                                  onClick={() => onApplyToHost(host.hostId, container.containerId)}
+                                />
+                                <Menu.Item
+                                  label="Apply to Cluster"
+                                  onClick={() => onApplyToCluster(host.hostId, container.containerId)}
+                                />
+                              </Menu>
+                            }
+                          >
+                            <IconButton name="ellipsis-v" size="sm" tooltip="Apply metrics schema" />
+                          </Dropdown>
+                        </td>
                       </tr>
                     );
                   })}
