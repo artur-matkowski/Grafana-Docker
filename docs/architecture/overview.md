@@ -32,7 +32,7 @@ Grafana-Docker is a distributed Docker container monitoring solution consisting 
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         Grafana Server                              │
 │  ┌───────────────────────────────────────────────────────────────┐  │
-│  │         Docker Metrics Panel (React/TypeScript)      │  │
+│  │            Docker Metrics Panel (React/TypeScript)            │  │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐    │  │
 │  │  │ SimplePanel │  │ Container   │  │    Host Manager     │    │  │
 │  │  │ (metrics    │──│ Controls    │──│    (multi-agent     │    │  │

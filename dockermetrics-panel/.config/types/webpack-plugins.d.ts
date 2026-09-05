@@ -40,7 +40,7 @@ declare module 'webpack-livereload-plugin' {
     port?: number | undefined;
     /**
      * he desired hostname for the appended `<script>` (if present) to point to
-     * @default hostname of the page, like `localhost` or <IP_REDACTED>
+     * @default hostname of the page, like `localhost` or an emulator host alias
      */
     hostname?: string | undefined;
     /**

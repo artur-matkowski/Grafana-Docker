@@ -65,7 +65,7 @@ npm install && npm run build
 
 ```
 grafan-docker/
-├── dockermetrics-panel/   # Grafana panel plugin (TypeScript/React)
+├── dockermetrics-panel/            # Grafana panel plugin (TypeScript/React)
 │   ├── src/                        # Source code
 │   ├── dist/                       # Build output
 │   └── package.json                # v1.2.14

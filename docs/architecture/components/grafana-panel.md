@@ -8,7 +8,7 @@ The Docker Metrics Panel is a React-based Grafana panel plugin that visualizes D
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│              Docker Metrics Panel                      │
+│                      Docker Metrics Panel                       │
 │                                                                 │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │                    SimplePanel.tsx                      │   │

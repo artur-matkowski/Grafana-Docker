@@ -93,7 +93,7 @@ docker restart grafana
 2. Add a new panel
 3. Select "Docker Metrics" as the visualization
 4. Go to panel options → "Agents" section
-5. Add your Docker Metrics Agent URLs (e.g., `http://<IP_REDACTED>:5000`)
+5. Add your Docker Metrics Agent URLs (e.g., `http://docker-host:5000`)
 6. Enable agents and select containers to monitor
 
 ## Network Considerations

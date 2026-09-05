@@ -53,7 +53,7 @@ export interface DockerMetricsQuery extends DataQuery {
 export interface HostConfig {
   id: string;
   name: string;
-  url: string;      // e.g., http://<IP_REDACTED>:5000
+  url: string;      // e.g., http://docker-host:5000
   enabled: boolean;
 }
 

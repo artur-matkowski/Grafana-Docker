@@ -163,7 +163,7 @@ export function ConfigEditor(props: Props) {
               <Input
                 value={host.url}
                 onChange={(e) => updateHost(index, { url: e.currentTarget.value })}
-                placeholder="http://<IP_REDACTED>:5000"
+                placeholder="http://docker-host:5000"
                 width={40}
               />
             </InlineField>

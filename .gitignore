@@ -63,6 +63,10 @@ Desktop.ini
 # =====================
 scripts/.env
 scripts/.env.development
+docker-metrics-collector/.env
+
+# Release archives are build output of release.sh, never committed
+*.tar.gz
 
 # =====================
 # Misc

@@ -15,7 +15,7 @@
 │                         Grafana Server                             │
 │                                                                    │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │              Docker Metrics Panel                   │  │
+│  │                     Docker Metrics Panel                     │  │
 │  │              (Custom Grafana Panel Plugin)                   │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                    │
